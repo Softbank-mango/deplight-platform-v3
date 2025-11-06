@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+*.egg-info/
+dist/
+build/
+
+# Lambda build artifacts
+lambda/ai_code_analyzer/package/
+lambda/ai_code_analyzer/lambda_function.zip
+*.zip
+
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+*.tfplan
+.terraform.lock.hcl
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+dashboard.log
+
+# Test
+test/demo_app/

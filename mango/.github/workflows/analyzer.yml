@@ -1,0 +1,147 @@
+name: AI Code Analyzer
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+jobs:
+  analyze:
+    name: AI Code Analysis
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for better analysis
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ap-northeast-2
+
+      - name: Get file list
+        id: files
+        run: |
+          # Get list of all files (excluding .git)
+          FILES=$(find . -type f -not -path "./.git/*" | head -100 | jq -R -s -c 'split("\n")[:-1]')
+          echo "files=$FILES" >> $GITHUB_OUTPUT
+
+      - name: Get README content
+        id: readme
+        run: |
+          if [ -f README.md ]; then
+            README=$(cat README.md | head -100 | jq -R -s -c '.')
+          else
+            README='""'
+          fi
+          echo "content=$README" >> $GITHUB_OUTPUT
+
+      - name: Invoke AI Analyzer Lambda
+        id: lambda
+        run: |
+          PAYLOAD=$(jq -n \
+            --arg repo "${{ github.repository }}" \
+            --arg sha "${{ github.sha }}" \
+            --arg branch "${{ github.ref_name }}" \
+            --arg pusher "${{ github.actor }}" \
+            --arg timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --argjson files '${{ steps.files.outputs.files }}' \
+            --argjson readme '${{ steps.readme.outputs.content }}' \
+            '{
+              repository: $repo,
+              commit_sha: $sha,
+              branch: $branch,
+              pusher: $pusher,
+              timestamp: $timestamp,
+              file_list: $files,
+              readme_content: $readme
+            }')
+
+          echo "Invoking Lambda with payload..."
+          RESPONSE=$(aws lambda invoke \
+            --function-name delightful-deploy-ai-analyzer \
+            --payload "$PAYLOAD" \
+            --cli-binary-format raw-in-base64-out \
+            /tmp/response.json)
+
+          echo "Lambda response:"
+          cat /tmp/response.json
+
+          # Extract analysis results
+          ANALYSIS_ID=$(cat /tmp/response.json | jq -r '.body | fromjson | .analysis_id')
+          echo "analysis_id=$ANALYSIS_ID" >> $GITHUB_OUTPUT
+
+      - name: Download analysis results from S3
+        id: analysis
+        run: |
+          ANALYSIS_ID="${{ steps.lambda.outputs.analysis_id }}"
+
+          # Download Dockerfile
+          aws s3 cp s3://delightful-deploy-artifacts-1762083190/analysis/$ANALYSIS_ID/dockerfile ./Dockerfile || echo "No Dockerfile generated"
+
+          # Download Terraform suggestions
+          aws s3 cp s3://delightful-deploy-artifacts-1762083190/analysis/$ANALYSIS_ID/terraform_vars.tfvars ./terraform_vars.tfvars || echo "No Terraform vars generated"
+
+          # Get project info
+          aws s3 cp s3://delightful-deploy-artifacts-1762083190/analysis/$ANALYSIS_ID/project_info.json ./project_info.json || echo "No project info"
+
+          if [ -f project_info.json ]; then
+            cat project_info.json
+          fi
+
+      - name: Comment PR with analysis
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+
+            let comment = '## 🤖 AI Code Analysis Results\n\n';
+
+            if (fs.existsSync('project_info.json')) {
+              const info = JSON.parse(fs.readFileSync('project_info.json', 'utf8'));
+              comment += `**Detected Framework:** ${info.primary_framework || 'Unknown'}\n`;
+              comment += `**Language:** ${info.primary_language || 'Unknown'}\n`;
+              comment += `**Runtime:** ${info.runtime || 'Unknown'}\n`;
+              comment += `**Port:** ${info.app_port || 8000}\n\n`;
+            }
+
+            if (fs.existsSync('Dockerfile')) {
+              comment += '### Generated Dockerfile\n```dockerfile\n';
+              comment += fs.readFileSync('Dockerfile', 'utf8');
+              comment += '\n```\n\n';
+            }
+
+            if (fs.existsSync('terraform_vars.tfvars')) {
+              comment += '### Suggested Terraform Variables\n```hcl\n';
+              comment += fs.readFileSync('terraform_vars.tfvars', 'utf8');
+              comment += '\n```\n\n';
+            }
+
+            comment += `**Analysis ID:** \`${{ steps.lambda.outputs.analysis_id }}\`\n`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+
+      - name: Upload analysis artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-analysis-${{ github.sha }}
+          path: |
+            Dockerfile
+            terraform_vars.tfvars
+            project_info.json
+          if-no-files-found: ignore

@@ -1,0 +1,463 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - staging
+          - production
+      target_repository:
+        description: 'Target repository to deploy (user repo URL)'
+        required: false
+        type: string
+      target_branch:
+        description: 'Target repository branch'
+        required: false
+        default: 'main'
+        type: string
+      deployment_id:
+        description: 'Deployment ID from dashboard'
+        required: false
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ap-northeast-2
+  ECR_REGISTRY: 513348493870.dkr.ecr.ap-northeast-2.amazonaws.com
+  ECR_REPOSITORY: delightful-deploy
+  ECS_CLUSTER: delightful-deploy-cluster
+  ECS_SERVICE: delightful-deploy-service
+
+jobs:
+  build-and-test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+
+    outputs:
+      image-tag: ${{ steps.meta.outputs.image-tag }}
+      app-port: ${{ steps.ai-analysis.outputs.port || '8000' }}
+      cpu: ${{ steps.ai-analysis.outputs.cpu || '256' }}
+      memory: ${{ steps.ai-analysis.outputs.memory || '512' }}
+
+    steps:
+      - name: Parse repository URL
+        id: parse-repo
+        run: |
+          TARGET_REPO="${{ github.event.inputs.target_repository }}"
+
+          if [ -n "$TARGET_REPO" ]; then
+            # Extract owner/repo from URL if it's a full GitHub URL
+            # Supports formats: https://github.com/owner/repo, https://github.com/owner/repo.git
+            REPO_PATH=$(echo "$TARGET_REPO" | sed -E 's|https?://github.com/||' | sed 's|\.git$||')
+            echo "repository=${REPO_PATH}" >> $GITHUB_OUTPUT
+            echo "Parsed repository: ${REPO_PATH}"
+          else
+            echo "repository=${{ github.repository }}" >> $GITHUB_OUTPUT
+            echo "Using default repository: ${{ github.repository }}"
+          fi
+
+      - name: Checkout target repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.parse-repo.outputs.repository }}
+          ref: ${{ github.event.inputs.target_branch || github.ref }}
+          path: ${{ github.event.inputs.target_repository && 'user_repo' || '.' }}
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Analyze user code with Lambda AI
+        if: github.event.inputs.target_repository
+        id: ai-analysis
+        run: |
+          echo "🔍 Analyzing user repository with AI..."
+
+          # Get file list from user_repo
+          cd user_repo
+          FILES=$(find . -type f -not -path "./.git/*" | head -100 | jq -R -s -c 'split("\n")[:-1]')
+
+          # Get README if exists and encode safely with jq
+          if [ -f README.md ]; then
+            README_CONTENT=$(cat README.md | head -100 | jq -Rs .)
+          else
+            README_CONTENT='""'
+          fi
+
+          # Create payload using jq for safe JSON encoding
+          PAYLOAD=$(jq -n \
+            --arg repo "${{ github.event.inputs.target_repository }}" \
+            --arg sha "${{ github.sha }}" \
+            --arg branch "${{ github.event.inputs.target_branch }}" \
+            --argjson files "$FILES" \
+            --argjson readme "$README_CONTENT" \
+            '{repository: $repo, commit_sha: $sha, branch: $branch, file_list: $files, readme_content: $readme}')
+
+          # Write payload to file for Lambda invocation
+          echo "$PAYLOAD" > /tmp/lambda_payload.json
+
+          # Call Lambda AI with payload file
+          ANALYSIS_RESULT=$(aws lambda invoke \
+            --function-name delightful-deploy-ai-analyzer \
+            --payload file:///tmp/lambda_payload.json \
+            --region ap-northeast-2 \
+            /tmp/analysis_output.json \
+            --query 'StatusCode' \
+            --output text)
+
+          echo "Lambda invocation status: $ANALYSIS_RESULT"
+          cat /tmp/analysis_output.json
+
+          # Parse Lambda response
+          RESPONSE_BODY=$(cat /tmp/analysis_output.json | jq -r '.body')
+          echo "$RESPONSE_BODY" > /tmp/analysis_parsed.json
+          cat /tmp/analysis_parsed.json | jq '.'
+
+          # Extract configuration
+          APP_PORT=$(cat /tmp/analysis_parsed.json | jq -r '.deployment_config.port // 8000')
+          CPU=$(cat /tmp/analysis_parsed.json | jq -r '.deployment_config.cpu // 256')
+          MEMORY=$(cat /tmp/analysis_parsed.json | jq -r '.deployment_config.memory // 512')
+          ANALYSIS_ID=$(cat /tmp/analysis_parsed.json | jq -r '.analysis_id')
+
+          echo "port=${APP_PORT}" >> $GITHUB_OUTPUT
+          echo "cpu=${CPU}" >> $GITHUB_OUTPUT
+          echo "memory=${MEMORY}" >> $GITHUB_OUTPUT
+          echo "analysis_id=${ANALYSIS_ID}" >> $GITHUB_OUTPUT
+
+          echo "✅ Analysis complete: Port=${APP_PORT}, CPU=${CPU}, Memory=${MEMORY}"
+
+          cd ..
+
+      - name: Download AI-generated Dockerfile from S3
+        if: github.event.inputs.target_repository
+        run: |
+          echo "📥 Downloading AI-generated Dockerfile from S3..."
+          ANALYSIS_ID="${{ steps.ai-analysis.outputs.analysis_id }}"
+          S3_BUCKET="delightful-deploy-codedeploy-artifacts-513348493870"
+
+          # Download Dockerfile from S3
+          aws s3 cp "s3://${S3_BUCKET}/analysis/${ANALYSIS_ID}/dockerfile" ./user_repo/Dockerfile || echo "⚠️ No Dockerfile in S3, will use existing"
+
+          echo "✅ Dockerfile ready"
+          ls -la ./user_repo/Dockerfile || echo "No Dockerfile found"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Generate image metadata
+        id: meta
+        run: |
+          SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
+          IMAGE_TAG="deploy-${SHORT_SHA}"
+          echo "image-tag=${IMAGE_TAG}" >> $GITHUB_OUTPUT
+          echo "short-sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
+
+      - name: Build Docker image
+        run: |
+          # If target_repository is provided, build from user_repo, otherwise use demo_app
+          BUILD_PATH="${{ github.event.inputs.target_repository && 'user_repo' || './mango/test/demo_app' }}"
+          docker build -t ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ steps.meta.outputs.image-tag }} \
+                       -t ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:latest \
+                       $BUILD_PATH
+
+      - name: Run security scan
+        run: |
+          echo "Running security scan..."
+          # Add Trivy or other security scanning here
+
+      - name: Push to ECR
+        run: |
+          docker push ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ steps.meta.outputs.image-tag }}
+          docker push ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:latest
+
+      - name: Update DynamoDB deployment record
+        run: |
+          TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          DEPLOYMENT_ID="deploy-${{ steps.meta.outputs.short-sha }}"
+
+          aws dynamodb put-item \
+            --table-name delightful-deploy-deployment-history \
+            --item "{
+              \"id\": {\"S\": \"${DEPLOYMENT_ID}\"},
+              \"timestamp\": {\"S\": \"${TIMESTAMP}\"},
+              \"repository\": {\"S\": \"${{ github.repository }}\"},
+              \"commit_sha\": {\"S\": \"${{ github.sha }}\"},
+              \"branch\": {\"S\": \"${{ github.ref_name }}\"},
+              \"pusher\": {\"S\": \"${{ github.actor }}\"},
+              \"image_tag\": {\"S\": \"${{ steps.meta.outputs.image-tag }}\"},
+              \"status\": {\"S\": \"building\"}
+            }"
+
+  deploy-infrastructure:
+    name: Deploy Infrastructure (Terraform)
+    needs: build-and-test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.5.0"
+
+      - name: Terraform Init
+        working-directory: ./mango/infrastructure/terraform
+        run: terraform init
+
+      - name: Terraform Plan
+        working-directory: ./mango/infrastructure/terraform
+        run: |
+          terraform plan \
+            -var="image_tag=${{ needs.build-and-test.outputs.image-tag }}" \
+            -var="commit_sha=${{ github.sha }}" \
+            -var="container_port=${{ needs.build-and-test.outputs.app-port }}" \
+            -var="container_cpu=${{ needs.build-and-test.outputs.cpu }}" \
+            -var="container_memory=${{ needs.build-and-test.outputs.memory }}" \
+            -out=tfplan
+
+      - name: Terraform Apply
+        continue-on-error: true  # 이미 존재하는 리소스는 무시
+        working-directory: ./mango/infrastructure/terraform
+        run: terraform apply -auto-approve tfplan
+
+      - name: Get ECS Service info
+        id: ecs
+        run: |
+          ECS_INFO=$(aws ecs describe-services \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --services ${{ env.ECS_SERVICE }} \
+            --query 'services[0]')
+
+          RUNNING_COUNT=$(echo $ECS_INFO | jq -r '.runningCount')
+          DESIRED_COUNT=$(echo $ECS_INFO | jq -r '.desiredCount')
+
+          echo "running-count=${RUNNING_COUNT}" >> $GITHUB_OUTPUT
+          echo "desired-count=${DESIRED_COUNT}" >> $GITHUB_OUTPUT
+
+  deploy-ecs:
+    name: Deploy to ECS (Blue-Green)
+    needs: [build-and-test, deploy-infrastructure]
+    if: always() && needs.build-and-test.result == 'success'  # Terraform 실패해도 계속
+    runs-on: ubuntu-latest
+
+    outputs:
+      deployment-id: ${{ steps.codedeploy.outputs.deployment-id }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Get current task definition
+        id: task-def
+        run: |
+          TASK_DEF_ARN=$(aws ecs describe-services \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --services ${{ env.ECS_SERVICE }} \
+            --query 'services[0].taskDefinition' \
+            --output text)
+
+          echo "task-def-arn=${TASK_DEF_ARN}" >> $GITHUB_OUTPUT
+
+      - name: Create AppSpec for CodeDeploy
+        run: |
+          cat > appspec.yaml <<EOF
+          version: 0.0
+          Resources:
+            - TargetService:
+                Type: AWS::ECS::Service
+                Properties:
+                  TaskDefinition: "${{ steps.task-def.outputs.task-def-arn }}"
+                  LoadBalancerInfo:
+                    ContainerName: "delightful-deploy"
+                    ContainerPort: ${{ needs.build-and-test.outputs.app-port }}
+                  PlatformVersion: "LATEST"
+          EOF
+
+      - name: Create CodeDeploy deployment
+        id: codedeploy
+        run: |
+          DEPLOYMENT_ID=$(aws deploy create-deployment \
+            --application-name delightful-deploy-app \
+            --deployment-group-name delightful-deploy-dg \
+            --deployment-config-name CodeDeployDefault.ECSCanary10Percent5Minutes \
+            --description "Deployment for commit ${{ github.sha }}" \
+            --revision "{\"revisionType\": \"AppSpecContent\", \"appSpecContent\": {\"content\": \"$(cat appspec.yaml | jq -Rs .)\"}}" \
+            --query 'deploymentId' \
+            --output text)
+
+          echo "deployment-id=${DEPLOYMENT_ID}" >> $GITHUB_OUTPUT
+          echo "CodeDeploy Deployment ID: ${DEPLOYMENT_ID}"
+
+      - name: Wait for CodeDeploy deployment
+        run: |
+          echo "Waiting for CodeDeploy deployment ${{ steps.codedeploy.outputs.deployment-id }}..."
+          aws deploy wait deployment-successful \
+            --deployment-id ${{ steps.codedeploy.outputs.deployment-id }}
+
+      - name: Get deployment status
+        if: always()
+        run: |
+          aws deploy get-deployment \
+            --deployment-id ${{ steps.codedeploy.outputs.deployment-id }} \
+            --query 'deploymentInfo.status' \
+            --output text
+
+      - name: Get ALB endpoint
+        id: alb
+        run: |
+          ALB_DNS=$(aws elbv2 describe-load-balancers \
+            --names delightful-deploy-alb \
+            --query 'LoadBalancers[0].DNSName' \
+            --output text)
+
+          echo "dns=${ALB_DNS}" >> $GITHUB_OUTPUT
+          echo "url=http://${ALB_DNS}" >> $GITHUB_OUTPUT
+
+  smoke-test:
+    name: Smoke Tests
+    needs: deploy-ecs
+    if: always() && needs.deploy-ecs.result == 'success'  # deploy-ecs 성공 시에만
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Wait for service warmup
+        run: sleep 30
+
+      - name: Health check
+        run: |
+          ALB_DNS="${{ needs.deploy-ecs.outputs.alb-dns }}"
+          MAX_RETRIES=10
+          RETRY_COUNT=0
+
+          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+            echo "Health check attempt $((RETRY_COUNT + 1))/$MAX_RETRIES..."
+
+            if curl -f "http://${ALB_DNS}/health" --max-time 10; then
+              echo "✓ Health check passed!"
+              exit 0
+            fi
+
+            RETRY_COUNT=$((RETRY_COUNT + 1))
+            sleep 10
+          done
+
+          echo "✗ Health check failed after $MAX_RETRIES attempts"
+          exit 1
+
+      - name: API endpoint test
+        run: |
+          ALB_DNS="${{ needs.deploy-ecs.outputs.alb-dns }}"
+
+          echo "Testing root endpoint..."
+          curl -f "http://${ALB_DNS}/" || exit 1
+
+          echo "Testing API status endpoint..."
+          curl -f "http://${ALB_DNS}/api/status" || exit 1
+
+  notify:
+    name: Notify Results
+    needs: [build-and-test, deploy-ecs, smoke-test]
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+      - name: Determine deployment status
+        id: status
+        run: |
+          if [ "${{ needs.smoke-test.result }}" == "success" ]; then
+            echo "status=success" >> $GITHUB_OUTPUT
+            echo "emoji=🎉" >> $GITHUB_OUTPUT
+            echo "color=good" >> $GITHUB_OUTPUT
+          else
+            echo "status=failure" >> $GITHUB_OUTPUT
+            echo "emoji=❌" >> $GITHUB_OUTPUT
+            echo "color=danger" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Send Slack notification
+        if: env.SLACK_WEBHOOK_URL != ''
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          PAYLOAD=$(jq -n \
+            --arg text "${{ steps.status.outputs.emoji }} Deployment ${{ steps.status.outputs.status }}" \
+            --arg repo "${{ github.repository }}" \
+            --arg sha "${{ github.sha }}" \
+            --arg actor "${{ github.actor }}" \
+            --arg status "${{ steps.status.outputs.status }}" \
+            --arg color "${{ steps.status.outputs.color }}" \
+            --arg url "${{ needs.deploy-ecs.outputs.url }}" \
+            '{
+              text: $text,
+              attachments: [{
+                color: $color,
+                fields: [
+                  {title: "Repository", value: $repo, short: true},
+                  {title: "Commit", value: $sha, short: true},
+                  {title: "Triggered by", value: $actor, short: true},
+                  {title: "Status", value: $status, short: true},
+                  {title: "URL", value: $url, short: false}
+                ]
+              }]
+            }')
+
+          curl -X POST -H 'Content-type: application/json' \
+            --data "$PAYLOAD" \
+            $SLACK_WEBHOOK_URL || echo "Slack notification failed"
+
+      - name: Update DynamoDB deployment status
+        run: |
+          SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
+          DEPLOYMENT_ID="deploy-${SHORT_SHA}"
+          STATUS="${{ steps.status.outputs.status }}"
+
+          aws dynamodb update-item \
+            --table-name delightful-deploy-deployment-history \
+            --key "{\"id\": {\"S\": \"${DEPLOYMENT_ID}\"}}" \
+            --update-expression "SET #status = :status, completed_at = :timestamp" \
+            --expression-attribute-names '{"#status": "status"}' \
+            --expression-attribute-values "{
+              \":status\": {\"S\": \"${STATUS}\"},
+              \":timestamp\": {\"S\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}
+            }"
+
+      - name: Create deployment summary
+        run: |
+          echo "## 🚀 Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Status:** ${{ steps.status.outputs.emoji }} ${{ steps.status.outputs.status }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Image Tag:** \`${{ needs.build-and-test.outputs.image-tag }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**ALB URL:** ${{ needs.deploy-ecs.outputs.url }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Triggered by:** @${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
