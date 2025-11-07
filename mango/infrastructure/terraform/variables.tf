@@ -210,9 +210,9 @@ variable "lambda_analyzer_role_arn" {
 }
 
 variable "create_log_groups" {
-  description = "Create CloudWatch log groups for ECS tasks"
+  description = "Create CloudWatch log groups for ECS tasks and Lambda functions"
   type        = bool
-  default     = false
+  default     = true  # Changed to true to let Terraform manage log groups
 }
 
 variable "log_group_name_app" {

@@ -70,8 +70,13 @@ resource "aws_sqs_queue" "lambda_dlq" {
 
 # CloudWatch Log Group for Lambda
 resource "aws_cloudwatch_log_group" "lambda_analyzer" {
+  count             = var.create_log_groups ? 1 : 0
   name              = "/aws/lambda/${aws_lambda_function.ai_analyzer.function_name}"
   retention_in_days = 7
+
+  lifecycle {
+    prevent_destroy = false
+  }
 
   tags = {
     Name = "${var.app_name}-lambda-logs"
