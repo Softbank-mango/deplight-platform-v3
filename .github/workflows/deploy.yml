@@ -472,15 +472,26 @@ jobs:
       - name: Update ECS service (rolling)
         run: |
           SERVICE_NAME="${{ steps.svc.outputs.service }}"
-          aws ecs update-service \
-            --cluster ${{ env.ECS_CLUSTER }} \
-            --service "$SERVICE_NAME" \
-            --task-definition ${{ steps.register.outputs.new-task-def-arn }} \
-            --force-new-deployment > /dev/null
 
-          aws ecs wait services-stable \
-            --cluster ${{ env.ECS_CLUSTER }} \
-            --services "$SERVICE_NAME"
+          # Only update task definition for main app service, not dashboard
+          if [ "$SERVICE_NAME" == "delightful-deploy-dashboard-service" ]; then
+            echo "Skipping task definition update for dashboard service"
+            echo "Dashboard uses its own task definition managed by Terraform"
+            echo "✅ Main app deployed successfully"
+          else
+            echo "Updating service: $SERVICE_NAME"
+            aws ecs update-service \
+              --cluster ${{ env.ECS_CLUSTER }} \
+              --service "$SERVICE_NAME" \
+              --task-definition ${{ steps.register.outputs.new-task-def-arn }} \
+              --force-new-deployment > /dev/null
+
+            aws ecs wait services-stable \
+              --cluster ${{ env.ECS_CLUSTER }} \
+              --services "$SERVICE_NAME"
+
+            echo "✅ Service updated successfully"
+          fi
 
       - name: Get ALB endpoint
         id: alb
