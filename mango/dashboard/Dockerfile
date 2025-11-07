@@ -12,13 +12,14 @@ WORKDIR /app
 
 # UV 설치 (5-10x faster than pip)
 RUN apt-get update && \
-    apt-get install -y curl && \
+    apt-get install -y --no-install-recommends curl ca-certificates && \
+    update-ca-certificates && \
     curl -LsSf https://astral.sh/uv/install.sh | sh && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# PATH에 UV 추가
-ENV PATH="/root/.cargo/bin:$PATH"
+# PATH에 UV 추가 (새 설치 스크립트는 ~/.local/bin 사용)
+ENV PATH="/root/.local/bin:/root/.cargo/bin:$PATH"
 
 # 의존성 파일 복사
 COPY requirements.txt .
