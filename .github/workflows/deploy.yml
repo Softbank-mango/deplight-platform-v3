@@ -440,6 +440,14 @@ jobs:
       - name: Update ECS service (rolling)
         run: |
           SERVICE_NAME="${{ needs.build-and-test.outputs.ecs-service-name }}"
+          # Fallback resolution on missing output
+          if [ -z "$SERVICE_NAME" ]; then
+            if [ -n "${{ github.event.inputs.target_repository }}" ]; then
+              SERVICE_NAME="${{ env.ECS_SERVICE }}"
+            else
+              SERVICE_NAME="delightful-deploy-dashboard-service"
+            fi
+          fi
           aws ecs update-service \
             --cluster ${{ env.ECS_CLUSTER }} \
             --service "$SERVICE_NAME" \
@@ -570,6 +578,11 @@ jobs:
     if: always()
 
     steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
       - name: Determine deployment status
         id: status
         run: |
