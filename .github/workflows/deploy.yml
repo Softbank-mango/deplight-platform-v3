@@ -289,7 +289,7 @@ jobs:
 
       - name: Set up Pack (Buildpacks)
         if: steps.detect.outputs.has-dockerfile == 'false'
-        uses: buildpacks/pack-action@v5
+        uses: buildpacks/github-actions/setup-pack@v5
 
       - name: Build Docker image (Buildpacks fallback)
         if: steps.detect.outputs.has-dockerfile == 'false'

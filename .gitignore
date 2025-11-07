@@ -43,3 +43,5 @@ coverage/
 Thumbs.db
 *.swp
 *.swo
+# Ignore local test app repo if present
+fastapi-deploy-test/
