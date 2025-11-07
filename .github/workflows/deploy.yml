@@ -177,6 +177,9 @@ jobs:
           ANALYSIS_ID=$(echo -n "${{ github.event.inputs.target_repository }}-${{ github.sha }}" | md5sum | cut -d' ' -f1 | cut -c1-24)
           echo "Analysis ID: $ANALYSIS_ID"
 
+          # Add analysis_id to payload
+          PAYLOAD=$(echo "$PAYLOAD" | jq --arg analysis_id "$ANALYSIS_ID" '. + {analysis_id: $analysis_id}')
+
           # Call Lambda AI asynchronously (no wait for response)
           echo "🔍 Triggering async AI analysis..."
           aws lambda invoke \
