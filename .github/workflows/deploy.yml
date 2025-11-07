@@ -287,9 +287,14 @@ jobs:
                        -t ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:latest \
                        "${{ steps.detect.outputs.build-path }}"
 
-      - name: Set up Pack (Buildpacks)
+      - name: Install Pack CLI (Buildpacks)
         if: steps.detect.outputs.has-dockerfile == 'false'
-        uses: buildpacks/github-actions/setup-pack@v5
+        run: |
+          PACK_VERSION=0.33.2
+          echo "Installing pack v${PACK_VERSION}..."
+          curl -sSL -o pack.tgz "https://github.com/buildpacks/pack/releases/download/v${PACK_VERSION}/pack-v${PACK_VERSION}-linux.tgz"
+          sudo tar -C /usr/local/bin -xzf pack.tgz pack
+          pack version
 
       - name: Build Docker image (Buildpacks fallback)
         if: steps.detect.outputs.has-dockerfile == 'false'
