@@ -371,9 +371,22 @@ jobs:
             -out=tfplan
 
       - name: Terraform Apply
-        continue-on-error: true  # 이미 존재하는 리소스는 무시
         working-directory: ./mango/infrastructure/terraform
         run: terraform apply -auto-approve tfplan
+
+      - name: Verify infrastructure (ECS services)
+        id: infra-check
+        run: |
+          DASH="delightful-deploy-dashboard-service"
+          DEFAULT="${{ env.ECS_SERVICE }}"
+          echo "Checking ECS services on cluster: ${{ env.ECS_CLUSTER }}"
+          aws ecs describe-services --cluster "${{ env.ECS_CLUSTER }}" --services "$DEFAULT" "$DASH" > /tmp/ecs_services.json || true
+          echo "--- describe-services output ---"
+          cat /tmp/ecs_services.json || true
+          DASH_EXISTS=$(jq -r '.services[] | select(.serviceName=="'"$DASH"'") | .status' /tmp/ecs_services.json 2>/dev/null | wc -l | tr -d ' ')
+          DEFAULT_EXISTS=$(jq -r '.services[] | select(.serviceName=="'"$DEFAULT"'") | .status' /tmp/ecs_services.json 2>/dev/null | wc -l | tr -d ' ')
+          echo "dashboard-exists=${DASH_EXISTS}" >> $GITHUB_OUTPUT
+          echo "default-exists=${DEFAULT_EXISTS}" >> $GITHUB_OUTPUT
 
       - name: Get ECS Service info
         id: ecs
@@ -437,17 +450,27 @@ jobs:
           echo "new-task-def-arn=${NEW_TASK_DEF_ARN}" >> $GITHUB_OUTPUT
           echo "Registered: ${NEW_TASK_DEF_ARN}"
 
+      - name: Resolve ECS service name
+        id: svc
+        run: |
+          DASH="delightful-deploy-dashboard-service"
+          DEFAULT="${{ env.ECS_SERVICE }}"
+          EXISTS=$(aws ecs describe-services \
+            --cluster "${{ env.ECS_CLUSTER }}" \
+            --services "$DASH" \
+            --query 'length(services[?serviceName!=null])' \
+            --output text || echo 0)
+          if [ "$EXISTS" = "1" ]; then
+            echo "service=$DASH" >> $GITHUB_OUTPUT
+            echo "Resolved service: $DASH"
+          else
+            echo "service=$DEFAULT" >> $GITHUB_OUTPUT
+            echo "Resolved service: $DEFAULT"
+          fi
+
       - name: Update ECS service (rolling)
         run: |
-          SERVICE_NAME="${{ needs.build-and-test.outputs.ecs-service-name }}"
-          # Fallback resolution on missing output
-          if [ -z "$SERVICE_NAME" ]; then
-            if [ -n "${{ github.event.inputs.target_repository }}" ]; then
-              SERVICE_NAME="${{ env.ECS_SERVICE }}"
-            else
-              SERVICE_NAME="delightful-deploy-dashboard-service"
-            fi
-          fi
+          SERVICE_NAME="${{ steps.svc.outputs.service }}"
           aws ecs update-service \
             --cluster ${{ env.ECS_CLUSTER }} \
             --service "$SERVICE_NAME" \
@@ -457,7 +480,6 @@ jobs:
           aws ecs wait services-stable \
             --cluster ${{ env.ECS_CLUSTER }} \
             --services "$SERVICE_NAME"
-          echo "CodeDeploy Deployment ID: ${DEPLOYMENT_ID}"
 
       - name: Get ALB endpoint
         id: alb
