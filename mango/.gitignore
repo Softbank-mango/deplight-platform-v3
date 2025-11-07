@@ -38,4 +38,4 @@ Thumbs.db
 dashboard.log
 
 # Test
-test/demo_app/
+# test/demo_app/  # Re-enabled for CI/CD testing
