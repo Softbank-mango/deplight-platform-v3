@@ -162,6 +162,7 @@ resource "aws_cloudwatch_dashboard" "main" {
 
 # Custom Metrics for Deployment Garden
 resource "aws_cloudwatch_log_metric_filter" "deployment_success" {
+  count          = var.create_log_groups ? 1 : 0
   name           = "${var.app_name}-deployment-success"
   log_group_name = local.app_log_group_name
   pattern        = "[timestamp, request_id, event_type = DEPLOYMENT_SUCCESS, ...]"
@@ -175,6 +176,7 @@ resource "aws_cloudwatch_log_metric_filter" "deployment_success" {
 }
 
 resource "aws_cloudwatch_log_metric_filter" "deployment_failure" {
+  count          = var.create_log_groups ? 1 : 0
   name           = "${var.app_name}-deployment-failure"
   log_group_name = local.app_log_group_name
   pattern        = "[timestamp, request_id, event_type = DEPLOYMENT_FAILURE, ...]"
@@ -188,6 +190,7 @@ resource "aws_cloudwatch_log_metric_filter" "deployment_failure" {
 }
 
 resource "aws_cloudwatch_log_metric_filter" "garden_flowers" {
+  count          = var.create_log_groups ? 1 : 0
   name           = "${var.app_name}-garden-flowers"
   log_group_name = local.app_log_group_name
   pattern        = "[timestamp, request_id, event_type = BLOOM, ...]"
