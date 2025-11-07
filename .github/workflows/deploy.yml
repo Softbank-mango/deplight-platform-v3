@@ -189,16 +189,16 @@ jobs:
 
           echo "✅ Lambda invoked asynchronously"
 
-          # Poll S3 for buildspec file (indicates analysis complete)
+          # Poll S3 for dockerfile (indicates analysis complete)
           S3_BUCKET="delightful-deploy-artifacts-513348493870"
-          S3_BUILDSPEC_KEY="analysis/${ANALYSIS_ID}/buildspec"
+          S3_DOCKERFILE_KEY="analysis/${ANALYSIS_ID}/dockerfile"
           MAX_WAIT=300  # 5 minutes
           WAIT_TIME=0
           POLL_INTERVAL=10
 
           echo "⏳ Waiting for AI analysis to complete..."
           while [ $WAIT_TIME -lt $MAX_WAIT ]; do
-            if aws s3 ls "s3://${S3_BUCKET}/${S3_BUILDSPEC_KEY}" >/dev/null 2>&1; then
+            if aws s3 ls "s3://${S3_BUCKET}/${S3_DOCKERFILE_KEY}" >/dev/null 2>&1; then
               echo "✅ Analysis complete! Files generated in S3."
               break
             fi
@@ -211,17 +211,19 @@ jobs:
             echo "⚠️ Timeout waiting for AI analysis. Proceeding without AI artifacts."
           fi
 
-          # Download buildspec to extract configuration
-          aws s3 cp "s3://${S3_BUCKET}/analysis/${ANALYSIS_ID}/buildspec" /tmp/buildspec.yml || true
+          # Download terraform_tfvars to extract configuration
+          aws s3 cp "s3://${S3_BUCKET}/analysis/${ANALYSIS_ID}/terraform_tfvars" /tmp/terraform.tfvars || true
 
-          # Extract port from buildspec or use defaults
+          # Extract port from terraform_tfvars or use defaults
           APP_PORT=8000
           CPU=256
           MEMORY=512
 
-          # Try to extract port from buildspec if it contains environment variables
-          if grep -q "APP_PORT" /tmp/buildspec.yml 2>/dev/null; then
-            APP_PORT=$(grep "APP_PORT" /tmp/buildspec.yml | head -1 | grep -oP '\d+' || echo "8000")
+          # Try to extract port from terraform.tfvars if it exists
+          if [ -f /tmp/terraform.tfvars ]; then
+            APP_PORT=$(grep -oP 'container_port\s*=\s*\K\d+' /tmp/terraform.tfvars || echo "8000")
+            CPU=$(grep -oP 'container_cpu\s*=\s*"\K\d+' /tmp/terraform.tfvars || echo "256")
+            MEMORY=$(grep -oP 'container_memory\s*=\s*"\K\d+' /tmp/terraform.tfvars || echo "512")
           fi
 
           echo "Using configuration: Port=${APP_PORT}, CPU=${CPU}, Memory=${MEMORY}"
