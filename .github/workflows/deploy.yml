@@ -102,6 +102,7 @@ jobs:
 
     outputs:
       image-tag: ${{ steps.meta.outputs.image-tag }}
+      ecr-repository: ${{ steps.meta.outputs.ecr-repository }}
       app-port: ${{ steps.ai-analysis.outputs.port || '8000' }}
       cpu: ${{ steps.ai-analysis.outputs.cpu || '256' }}
       memory: ${{ steps.ai-analysis.outputs.memory || '512' }}
@@ -283,14 +284,31 @@ jobs:
         run: |
           SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
           IMAGE_TAG="deploy-${SHORT_SHA}"
+
+          # For user apps, use separate ECR repository per app
+          if [ -n "${{ github.event.inputs.target_repository }}" ]; then
+            # Extract repo name from URL (e.g., "sabill123/fastapi-deploy-test" → "fastapi-deploy-test")
+            REPO_NAME=$(echo "${{ github.event.inputs.target_repository }}" | sed 's|.*/||' | sed 's|\.git$||' | tr '[:upper:]' '[:lower:]')
+            ECR_REPO="user-app-${REPO_NAME}"
+            echo "ecr-repository=${ECR_REPO}" >> $GITHUB_OUTPUT
+
+            # Create ECR repository if it doesn't exist
+            aws ecr describe-repositories --repository-names "${ECR_REPO}" --region ${{ env.AWS_REGION }} 2>/dev/null || \
+              aws ecr create-repository --repository-name "${ECR_REPO}" --region ${{ env.AWS_REGION }}
+          else
+            # Platform deployment uses default repository
+            echo "ecr-repository=${{ env.ECR_REPOSITORY }}" >> $GITHUB_OUTPUT
+          fi
+
           echo "image-tag=${IMAGE_TAG}" >> $GITHUB_OUTPUT
           echo "short-sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
 
       - name: Build Docker image (Dockerfile)
         if: steps.detect.outputs.has-dockerfile == 'true'
         run: |
-          docker build -t ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ steps.meta.outputs.image-tag }} \
-                       -t ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:latest \
+          ECR_REPO="${{ steps.meta.outputs.ecr-repository }}"
+          docker build -t ${{ env.ECR_REGISTRY }}/${ECR_REPO}:${{ steps.meta.outputs.image-tag }} \
+                       -t ${{ env.ECR_REGISTRY }}/${ECR_REPO}:latest \
                        "${{ steps.detect.outputs.build-path }}"
 
       - name: Install Pack CLI (Buildpacks)
@@ -305,13 +323,14 @@ jobs:
       - name: Build Docker image (Buildpacks fallback)
         if: steps.detect.outputs.has-dockerfile == 'false'
         run: |
-          IMAGE="${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ steps.meta.outputs.image-tag }}"
+          ECR_REPO="${{ steps.meta.outputs.ecr-repository }}"
+          IMAGE="${{ env.ECR_REGISTRY }}/${ECR_REPO}:${{ steps.meta.outputs.image-tag }}"
           pack build "$IMAGE" \
             --path "${{ steps.detect.outputs.build-path }}" \
             --builder paketobuildpacks/builder-jammy-base \
             --env "BP_LOG_LEVEL=info"
           # Also tag latest
-          docker tag "$IMAGE" "${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:latest"
+          docker tag "$IMAGE" "${{ env.ECR_REGISTRY }}/${ECR_REPO}:latest"
 
       - name: Run security scan
         run: |
@@ -320,8 +339,9 @@ jobs:
 
       - name: Push to ECR
         run: |
-          docker push ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ steps.meta.outputs.image-tag }}
-          docker push ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:latest
+          ECR_REPO="${{ steps.meta.outputs.ecr-repository }}"
+          docker push ${{ env.ECR_REGISTRY }}/${ECR_REPO}:${{ steps.meta.outputs.image-tag }}
+          docker push ${{ env.ECR_REGISTRY }}/${ECR_REPO}:latest
 
       - name: Update DynamoDB deployment record
         run: |
@@ -535,7 +555,7 @@ jobs:
             "taskRoleArn": "${{ secrets.ECS_TASK_ROLE_ARN }}",
             "containerDefinitions": [{
               "name": "${SERVICE_NAME}",
-              "image": "${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${IMAGE_TAG}",
+              "image": "${{ env.ECR_REGISTRY }}/${{ needs.build-and-test.outputs.ecr-repository }}:${IMAGE_TAG}",
               "essential": true,
               "portMappings": [{
                 "containerPort": ${APP_PORT},
@@ -629,7 +649,7 @@ jobs:
             --task-definition ${TASK_DEF_ARN} \
             --query 'taskDefinition' > task-def.json
 
-          IMAGE="${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ needs.build-and-test.outputs.image-tag }}"
+          IMAGE="${{ env.ECR_REGISTRY }}/${{ needs.build-and-test.outputs.ecr-repository }}:${{ needs.build-and-test.outputs.image-tag }}"
           cat task-def.json | jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)' > task-def-clean.json
           cat task-def-clean.json | jq --arg IMG "$IMAGE" '.containerDefinitions[0].image = $IMG' > task-def-updated.json
 
