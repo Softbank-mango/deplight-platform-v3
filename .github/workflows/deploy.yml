@@ -477,10 +477,14 @@ jobs:
               \"log_type\": {\"S\": \"info\"}
             }" || true
 
-          # 1. Create Target Group
-          echo "Creating target group..."
+          # 1. Create Target Group (name must be ≤32 chars)
+          # Use first 8 chars of deployment ID as short identifier
+          SHORT_ID=$(echo -n "${DEPLOYMENT_ID}" | cut -c1-8)
+          TG_NAME="user-app-${SHORT_ID}-tg"
+          echo "Creating target group: ${TG_NAME}..."
+
           TG_ARN=$(aws elbv2 create-target-group \
-            --name "user-app-${DEPLOYMENT_ID}-tg" \
+            --name "${TG_NAME}" \
             --protocol HTTP \
             --port ${APP_PORT} \
             --vpc-id ${{ secrets.VPC_ID }} \
