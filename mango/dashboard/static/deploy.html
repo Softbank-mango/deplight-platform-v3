@@ -284,7 +284,7 @@
                     // 2초마다 API 폴링
                     const pollInterval = setInterval(async () => {
                         try {
-                            const response = await fetch(`/api/deploy/${deploymentId}/status`);
+                            const response = await fetch(`api/deploy/${deploymentId}/status`);
                             const data = await response.json();
 
                             if (!data.success) {
@@ -464,7 +464,7 @@
             const handleStartDeploy = async (info) => {
                 try {
                     // 실제 API 호출로 배포 시작
-                    const response = await fetch('/api/deploy', {
+                    const response = await fetch('api/deploy', {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',

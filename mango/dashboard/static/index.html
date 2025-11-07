@@ -286,7 +286,7 @@
 
             const fetchServices = async () => {
                 try {
-                    const response = await fetch(`${API_BASE_URL}/api/services`);
+                    const response = await fetch(`${API_BASE_URL}api/services`);
                     const data = await response.json();
 
                     if (data.success && data.services) {
@@ -610,7 +610,7 @@
 
                 try {
                     // Call real deployment API
-                    const response = await fetch(`${API_BASE_URL}/api/deploy`, {
+                    const response = await fetch(`${API_BASE_URL}api/deploy`, {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
@@ -766,7 +766,7 @@
                 // Fetch real deployment status from API
                 const fetchStatus = async () => {
                     try {
-                        const response = await fetch(`${API_BASE_URL}/api/deploy/${deployment.id}/status`);
+                        const response = await fetch(`${API_BASE_URL}api/deploy/${deployment.id}/status`);
                         const data = await response.json();
 
                         if (data.success) {
