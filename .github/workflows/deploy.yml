@@ -1,8 +1,9 @@
 name: CI/CD Pipeline
 
 on:
-  push:
-    branches: [main]
+  # Temporarily disabled auto-trigger on push to avoid conflicts with Terraform
+  # push:
+  #   branches: [main]
   workflow_dispatch:
     inputs:
       environment:

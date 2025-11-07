@@ -1,11 +1,12 @@
 name: Deploy Dashboard to ECS
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'mango/dashboard/**'
-      - '.github/workflows/deploy-dashboard.yml'
+  # Temporarily disabled auto-trigger on push to avoid conflicts with Terraform
+  # push:
+  #   branches: [main]
+  #   paths:
+  #     - 'mango/dashboard/**'
+  #     - '.github/workflows/deploy-dashboard.yml'
   workflow_dispatch:
 
 permissions:
