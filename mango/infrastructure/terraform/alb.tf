@@ -98,6 +98,45 @@ resource "aws_lb_listener" "http" {
   }
 }
 
+# Dashboard Target Group
+resource "aws_lb_target_group" "dashboard" {
+  name        = "${var.app_name}-dashboard-tg"
+  port        = var.container_port
+  protocol    = "HTTP"
+  vpc_id      = var.vpc_id
+  target_type = "ip"
+
+  health_check {
+    enabled             = true
+    healthy_threshold   = var.health_check_healthy_threshold
+    unhealthy_threshold = var.health_check_unhealthy_threshold
+    timeout             = var.health_check_timeout
+    interval            = var.health_check_interval
+    path                = "/api/health"
+    protocol            = "HTTP"
+    matcher             = "200"
+  }
+
+  deregistration_delay = var.deregistration_delay
+}
+
+# Route /dashboard* to dashboard service
+resource "aws_lb_listener_rule" "dashboard" {
+  listener_arn = aws_lb_listener.http.arn
+  priority     = 40
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.dashboard.arn
+  }
+
+  condition {
+    path_pattern {
+      values = ["/dashboard", "/dashboard/*"]
+    }
+  }
+}
+
 # ALB Listener - HTTP Test Traffic (Port 8080 for testing Green)
 resource "aws_lb_listener" "http_test" {
   load_balancer_arn = aws_lb.main.arn

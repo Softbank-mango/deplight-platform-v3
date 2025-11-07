@@ -592,3 +592,26 @@ jobs:
           echo "**ALB URL:** ${{ needs.deploy-ecs.outputs.url }}" >> $GITHUB_STEP_SUMMARY
           echo "**Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
           echo "**Triggered by:** @${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload workflow logs to S3
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          RUN_ID="${{ github.run_id }}"
+          REPO="${{ github.repository }}"
+          OWNER=$(echo "$REPO" | cut -d'/' -f1)
+          REPO_NAME=$(echo "$REPO" | cut -d'/' -f2)
+          RELEASE_TAG="${{ needs.create-release.outputs.release-tag || github.run_id }}"
+          S3_BUCKET="delightful-deploy-artifacts-513348493870"
+
+          echo "Downloading GitHub Actions logs for run ${RUN_ID}..."
+          curl -sSL -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${OWNER}/${REPO_NAME}/actions/runs/${RUN_ID}/logs" \
+            -o workflow-logs.zip || true
+
+          if [ -f workflow-logs.zip ]; then
+            aws s3 cp workflow-logs.zip "s3://${S3_BUCKET}/deployments/${RELEASE_TAG}/workflow-logs.zip"
+            echo "Uploaded logs to s3://${S3_BUCKET}/deployments/${RELEASE_TAG}/workflow-logs.zip"
+          else
+            echo "No logs downloaded"
+          fi

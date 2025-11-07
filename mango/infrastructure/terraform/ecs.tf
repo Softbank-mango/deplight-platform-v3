@@ -174,6 +174,85 @@ resource "aws_ecs_service" "app" {
   }
 }
 
+# =====================
+# Dashboard ECS Service
+# =====================
+
+resource "aws_cloudwatch_log_group" "dashboard" {
+  name              = "/aws/ecs/${var.app_name}-dashboard"
+  retention_in_days = 7
+}
+
+resource "aws_ecs_task_definition" "dashboard" {
+  family                   = "${var.app_name}-dashboard"
+  network_mode             = "awsvpc"
+  requires_compatibilities = ["FARGATE"]
+  cpu                      = var.container_cpu
+  memory                   = var.container_memory
+  execution_role_arn       = aws_iam_role.ecs_execution_role.arn
+  task_role_arn            = aws_iam_role.ecs_task_role.arn
+
+  container_definitions = jsonencode([
+    {
+      name      = "dashboard"
+      image     = "${var.ecr_repository_url}:dashboard-latest"
+      essential = true
+
+      portMappings = [
+        {
+          containerPort = var.container_port
+          protocol      = "tcp"
+        }
+      ]
+
+      environment = [
+        { name = "PORT", value = tostring(var.container_port) },
+        { name = "ENVIRONMENT", value = var.environment }
+      ]
+
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          "awslogs-group"         = aws_cloudwatch_log_group.dashboard.name
+          "awslogs-region"        = var.aws_region
+          "awslogs-stream-prefix" = "ecs"
+        }
+      }
+    }
+  ])
+}
+
+resource "aws_ecs_service" "dashboard" {
+  name            = "${var.app_name}-dashboard-service"
+  cluster         = aws_ecs_cluster.main.id
+  task_definition = aws_ecs_task_definition.dashboard.arn
+  desired_count   = 1
+  launch_type     = "FARGATE"
+
+  network_configuration {
+    subnets          = var.private_subnet_ids
+    security_groups  = [aws_security_group.ecs_tasks.id]
+    assign_public_ip = false
+  }
+
+  deployment_controller {
+    type = "ECS"
+  }
+
+  load_balancer {
+    target_group_arn = aws_lb_target_group.dashboard.arn
+    container_name   = "dashboard"
+    container_port   = var.container_port
+  }
+
+  enable_ecs_managed_tags = true
+  propagate_tags          = "SERVICE"
+
+  depends_on = [
+    aws_lb_listener.http
+  ]
+}
+
 # Auto Scaling Target
 resource "aws_appautoscaling_target" "ecs" {
   max_capacity       = var.max_capacity

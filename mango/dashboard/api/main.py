@@ -60,6 +60,15 @@ async def root():
     return FileResponse(str(index_path))
 
 
+@app.get("/dashboard")
+async def dashboard_root():
+    """대시보드 경로 - index.html 제공(/dashboard 라우팅 호환)"""
+    index_path = STATIC_DIR / "index.html"
+    if not index_path.exists():
+        raise HTTPException(status_code=404, detail=f"index.html not found at {index_path}")
+    return FileResponse(str(index_path))
+
+
 @app.get("/deploy.html")
 async def deploy_page():
     """배포 페이지 제공"""

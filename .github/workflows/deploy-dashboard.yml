@@ -17,7 +17,7 @@ env:
   ECR_REGISTRY: 513348493870.dkr.ecr.ap-northeast-2.amazonaws.com
   ECR_REPOSITORY: delightful-deploy
   ECS_CLUSTER: delightful-deploy-cluster
-  ECS_SERVICE: delightful-deploy-service
+  ECS_SERVICE: delightful-deploy-dashboard-service
 
 jobs:
   deploy-dashboard:
