@@ -3,6 +3,7 @@
 
 # Security group for VPC endpoints
 resource "aws_security_group" "vpc_endpoints" {
+  count      = var.create_vpc_endpoints ? 1 : 0
   name_prefix = "${var.app_name}-vpc-endpoints-"
   description = "Security group for VPC endpoints"
   vpc_id      = var.vpc_id
@@ -34,11 +35,12 @@ resource "aws_security_group" "vpc_endpoints" {
 
 # SSM VPC Endpoint (for secrets retrieval)
 resource "aws_vpc_endpoint" "ssm" {
+  count              = var.create_vpc_endpoints ? 1 : 0
   vpc_id              = var.vpc_id
   service_name        = "com.amazonaws.${var.aws_region}.ssm"
   vpc_endpoint_type   = "Interface"
   subnet_ids          = var.private_subnet_ids
-  security_group_ids  = [aws_security_group.vpc_endpoints.id]
+  security_group_ids  = [aws_security_group.vpc_endpoints[0].id]
   private_dns_enabled = true
 
   tags = {
@@ -48,11 +50,12 @@ resource "aws_vpc_endpoint" "ssm" {
 
 # ECR API VPC Endpoint (for Docker image metadata)
 resource "aws_vpc_endpoint" "ecr_api" {
+  count              = var.create_vpc_endpoints ? 1 : 0
   vpc_id              = var.vpc_id
   service_name        = "com.amazonaws.${var.aws_region}.ecr.api"
   vpc_endpoint_type   = "Interface"
   subnet_ids          = var.private_subnet_ids
-  security_group_ids  = [aws_security_group.vpc_endpoints.id]
+  security_group_ids  = [aws_security_group.vpc_endpoints[0].id]
   private_dns_enabled = true
 
   tags = {
@@ -62,11 +65,12 @@ resource "aws_vpc_endpoint" "ecr_api" {
 
 # ECR DKR VPC Endpoint (for Docker image layers)
 resource "aws_vpc_endpoint" "ecr_dkr" {
+  count              = var.create_vpc_endpoints ? 1 : 0
   vpc_id              = var.vpc_id
   service_name        = "com.amazonaws.${var.aws_region}.ecr.dkr"
   vpc_endpoint_type   = "Interface"
   subnet_ids          = var.private_subnet_ids
-  security_group_ids  = [aws_security_group.vpc_endpoints.id]
+  security_group_ids  = [aws_security_group.vpc_endpoints[0].id]
   private_dns_enabled = true
 
   tags = {
@@ -76,11 +80,12 @@ resource "aws_vpc_endpoint" "ecr_dkr" {
 
 # CloudWatch Logs VPC Endpoint (for container logs)
 resource "aws_vpc_endpoint" "logs" {
+  count              = var.create_vpc_endpoints ? 1 : 0
   vpc_id              = var.vpc_id
   service_name        = "com.amazonaws.${var.aws_region}.logs"
   vpc_endpoint_type   = "Interface"
   subnet_ids          = var.private_subnet_ids
-  security_group_ids  = [aws_security_group.vpc_endpoints.id]
+  security_group_ids  = [aws_security_group.vpc_endpoints[0].id]
   private_dns_enabled = true
 
   tags = {

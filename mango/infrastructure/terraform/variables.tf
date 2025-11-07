@@ -178,6 +178,12 @@ variable "enable_xray" {
   default     = true
 }
 
+variable "create_vpc_endpoints" {
+  description = "Create VPC interface endpoints for SSM/ECR/Logs. Disable if endpoints or conflicting private DNS already exist in the VPC."
+  type        = bool
+  default     = false
+}
+
 variable "cpu_target_value" {
   description = "Target CPU utilization for autoscaling"
   type        = number
