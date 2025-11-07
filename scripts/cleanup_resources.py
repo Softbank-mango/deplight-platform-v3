@@ -88,15 +88,87 @@ def delete_dynamodb_tables():
                 print(f"      ⚠️  Error waiting for {table_name}: {e}")
         print("   ✅ All DynamoDB tables deleted")
 
+def delete_alb_target_groups():
+    """ALB Target Groups 삭제"""
+    print_step("3", "Checking ALB Target Groups...")
+
+    elbv2 = boto3.client('elbv2', region_name=AWS_REGION)
+
+    target_groups = [
+        f"{APP_NAME}-blue-tg",
+        f"{APP_NAME}-green-tg",
+        f"{APP_NAME}-dashboard-tg",
+    ]
+
+    for tg_name in target_groups:
+        try:
+            response = elbv2.describe_target_groups(Names=[tg_name])
+            if response['TargetGroups']:
+                tg_arn = response['TargetGroups'][0]['TargetGroupArn']
+                print(f"   🗑️  Deleting target group: {tg_name}")
+                elbv2.delete_target_group(TargetGroupArn=tg_arn)
+                print(f"   ✅ Target group deleted")
+        except ClientError as e:
+            if e.response['Error']['Code'] == 'TargetGroupNotFound':
+                print(f"   ℹ️  Target group {tg_name} not found")
+            else:
+                print(f"   ⚠️  Error: {e}")
+
+def delete_lambda_function():
+    """Lambda Function 삭제"""
+    print_step("4", "Checking Lambda Function...")
+
+    lambda_client = boto3.client('lambda', region_name=AWS_REGION)
+    function_name = f"{APP_NAME}-ai-analyzer"
+
+    try:
+        lambda_client.get_function(FunctionName=function_name)
+        print(f"   🗑️  Deleting Lambda function: {function_name}")
+        lambda_client.delete_function(FunctionName=function_name)
+        print(f"   ✅ Lambda function deleted")
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'ResourceNotFoundException':
+            print(f"   ℹ️  Lambda function not found")
+        else:
+            print(f"   ⚠️  Error: {e}")
+
+def delete_cloudwatch_query_definitions():
+    """CloudWatch Query Definitions 삭제"""
+    print_step("5", "Checking CloudWatch Query Definitions...")
+
+    logs = boto3.client('logs', region_name=AWS_REGION)
+
+    query_names = [
+        f"{APP_NAME}-deployment-timeline",
+        f"{APP_NAME}-performance-analysis",
+    ]
+
+    try:
+        response = logs.describe_query_definitions()
+        existing_queries = response.get('queryDefinitions', [])
+
+        for query_name in query_names:
+            matching_queries = [q for q in existing_queries if q['name'] == query_name]
+            if matching_queries:
+                query_id = matching_queries[0]['queryDefinitionId']
+                print(f"   🗑️  Deleting query definition: {query_name}")
+                logs.delete_query_definition(queryDefinitionId=query_id)
+                print(f"   ✅ Query definition deleted")
+            else:
+                print(f"   ℹ️  Query definition {query_name} not found")
+    except ClientError as e:
+        print(f"   ⚠️  Error: {e}")
+
 def delete_cloudwatch_log_groups():
     """CloudWatch Log Group 삭제"""
-    print_step("3", "Checking CloudWatch Log Groups...")
+    print_step("6", "Checking CloudWatch Log Groups...")
 
     logs = boto3.client('logs', region_name=AWS_REGION)
 
     log_groups = [
         f"/aws/ecs/{APP_NAME}-dashboard",
         f"/aws/ecs/{APP_NAME}",
+        f"/aws/lambda/{APP_NAME}-ai-analyzer",
     ]
 
     for log_group_name in log_groups:
@@ -131,7 +203,10 @@ def main():
     print("\n⚠️  WARNING: This will delete the following resources:")
     print("   • X-Ray sampling rule")
     print("   • 4 DynamoDB tables (ALL DATA WILL BE LOST)")
-    print("   • 2 CloudWatch log groups")
+    print("   • 3 ALB Target Groups")
+    print("   • 1 Lambda function")
+    print("   • 2 CloudWatch Query Definitions")
+    print("   • 3 CloudWatch log groups")
     print("\nType 'DELETE' to confirm: ", end='')
 
     confirmation = input().strip()
@@ -143,9 +218,12 @@ def main():
     print("\n✅ Confirmation received, proceeding with deletion...")
 
     try:
-        # Delete resources
+        # Delete resources in order
         delete_xray_sampling_rule()
         delete_dynamodb_tables()
+        delete_alb_target_groups()
+        delete_lambda_function()
+        delete_cloudwatch_query_definitions()
         delete_cloudwatch_log_groups()
 
         # Summary
@@ -157,9 +235,19 @@ def main():
         print(f"    - {APP_NAME}-ai-analysis")
         print(f"    - {APP_NAME}-deployment-history")
         print(f"    - {APP_NAME}-deployment-logs")
-        print("  • CloudWatch log groups (2):")
+        print("  • ALB Target Groups (3):")
+        print(f"    - {APP_NAME}-blue-tg")
+        print(f"    - {APP_NAME}-green-tg")
+        print(f"    - {APP_NAME}-dashboard-tg")
+        print(f"  • Lambda function:")
+        print(f"    - {APP_NAME}-ai-analyzer")
+        print("  • CloudWatch Query Definitions (2):")
+        print(f"    - {APP_NAME}-deployment-timeline")
+        print(f"    - {APP_NAME}-performance-analysis")
+        print("  • CloudWatch log groups (3):")
         print(f"    - /aws/ecs/{APP_NAME}")
         print(f"    - /aws/ecs/{APP_NAME}-dashboard")
+        print(f"    - /aws/lambda/{APP_NAME}-ai-analyzer")
         print("\nNext step: Run Terraform apply")
         print("  https://github.com/Softbank-mango/deplight-platform-v3/actions")
 
