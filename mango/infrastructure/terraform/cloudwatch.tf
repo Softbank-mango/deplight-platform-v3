@@ -238,10 +238,10 @@ resource "aws_sns_topic_subscription" "alerts_email" {
 resource "aws_cloudwatch_query_definition" "error_analysis" {
   name = "${var.app_name}-error-analysis"
 
-  log_group_names = [
-    local.app_log_group_name,
-    aws_cloudwatch_log_group.lambda_analyzer.name
-  ]
+  log_group_names = concat(
+    [local.app_log_group_name],
+    var.create_log_groups ? [aws_cloudwatch_log_group.lambda_analyzer[0].name] : [var.log_group_name_lambda]
+  )
 
   query_string = <<-QUERY
     fields @timestamp, @message

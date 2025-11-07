@@ -227,6 +227,12 @@ variable "log_group_name_dashboard" {
   default     = "/aws/ecs/delightful-deploy-dashboard"
 }
 
+variable "log_group_name_lambda" {
+  description = "CloudWatch log group name for Lambda"
+  type        = string
+  default     = "/aws/lambda/delightful-deploy-ai-analyzer"
+}
+
 variable "use_existing_artifacts_bucket" {
   description = "Use pre-existing S3 artifacts bucket"
   type        = bool
