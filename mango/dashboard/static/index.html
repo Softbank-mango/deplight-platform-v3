@@ -267,7 +267,8 @@
     <script type="text/babel">
         const { useState, useEffect } = React;
 
-        const API_BASE_URL = window.location.origin;
+        // Use empty string for relative paths (same origin)
+        const API_BASE_URL = '';
 
         // Main App Component
         function App() {
