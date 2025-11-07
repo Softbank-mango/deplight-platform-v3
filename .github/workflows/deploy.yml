@@ -517,7 +517,7 @@ jobs:
           sudo apt-get install -y curl
 
       - name: Wait for service warmup
-        run: sleep 30
+        run: /usr/bin/sleep 30
 
       - name: Health check
         run: |
@@ -526,14 +526,14 @@ jobs:
           RETRY_COUNT=0
           while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
             echo "Health check attempt $((RETRY_COUNT + 1))/$MAX_RETRIES..."
-            for PATH in "/api/health" "/health" "/"; do
-              if curl -fsS "http://${ALB_DNS}${PATH}" --max-time 10 >/dev/null; then
-                echo "✓ Health check passed at ${PATH}!"
+            for HEALTH_PATH in "/api/health" "/health" "/"; do
+              if /usr/bin/curl -fsS "http://${ALB_DNS}${HEALTH_PATH}" --max-time 10 >/dev/null; then
+                echo "✓ Health check passed at ${HEALTH_PATH}!"
                 exit 0
               fi
             done
             RETRY_COUNT=$((RETRY_COUNT + 1))
-            sleep 10
+            /usr/bin/sleep 10
           done
           echo "✗ Health check failed after $MAX_RETRIES attempts"
           exit 1
@@ -543,10 +543,10 @@ jobs:
           ALB_DNS="${{ needs.deploy-ecs.outputs.alb-dns }}"
 
           echo "Testing root endpoint..."
-          curl -fsS "http://${ALB_DNS}/" --max-time 10 >/dev/null || echo "root endpoint not available"
+          /usr/bin/curl -fsS "http://${ALB_DNS}/" --max-time 10 >/dev/null || echo "root endpoint not available"
 
           echo "Testing /api/health..."
-          curl -fsS "http://${ALB_DNS}/api/health" --max-time 10 >/dev/null || echo "/api/health not available"
+          /usr/bin/curl -fsS "http://${ALB_DNS}/api/health" --max-time 10 >/dev/null || echo "/api/health not available"
 
   store-artifacts:
     name: Store Deployment Artifacts
