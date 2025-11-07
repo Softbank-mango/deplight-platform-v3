@@ -93,7 +93,28 @@ resource "aws_vpc_endpoint" "logs" {
   }
 }
 
-# Note: S3 Gateway endpoint commented out to avoid route table dependencies
-# Add manually if needed:
-# aws ec2 create-vpc-endpoint --vpc-id <VPC_ID> --service-name com.amazonaws.ap-northeast-2.s3 \
-#   --route-table-ids <ROUTE_TABLE_IDS>
+# S3 Gateway VPC Endpoint (for ECR image layers)
+resource "aws_vpc_endpoint" "s3" {
+  count            = var.create_vpc_endpoints ? 1 : 0
+  vpc_id           = var.vpc_id
+  service_name     = "com.amazonaws.${var.aws_region}.s3"
+  vpc_endpoint_type = "Gateway"
+  route_table_ids  = var.route_table_ids
+
+  tags = {
+    Name = "${var.app_name}-s3-endpoint"
+  }
+}
+
+# DynamoDB Gateway VPC Endpoint (for DynamoDB access without NAT)
+resource "aws_vpc_endpoint" "dynamodb" {
+  count            = var.create_vpc_endpoints ? 1 : 0
+  vpc_id           = var.vpc_id
+  service_name     = "com.amazonaws.${var.aws_region}.dynamodb"
+  vpc_endpoint_type = "Gateway"
+  route_table_ids  = var.route_table_ids
+
+  tags = {
+    Name = "${var.app_name}-dynamodb-endpoint"
+  }
+}

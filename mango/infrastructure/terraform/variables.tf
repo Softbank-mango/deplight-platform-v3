@@ -97,7 +97,7 @@ variable "commit_sha" {
 variable "health_check_path" {
   description = "Health check endpoint path"
   type        = string
-  default     = "/health"
+  default     = "/api/health"
 }
 
 variable "health_check_interval" {
@@ -182,6 +182,12 @@ variable "create_vpc_endpoints" {
   description = "Create VPC interface endpoints for SSM/ECR/Logs. Disable if endpoints or conflicting private DNS already exist in the VPC."
   type        = bool
   default     = false
+}
+
+variable "route_table_ids" {
+  description = "List of route table IDs for Gateway VPC endpoints (S3, DynamoDB)"
+  type        = list(string)
+  default     = []
 }
 
 # Optional controls to integrate with existing environment
