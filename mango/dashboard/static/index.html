@@ -608,27 +608,39 @@
 
                 setDeploying(true);
 
-                // Simulate deployment initiation
-                setTimeout(() => {
-                    const deployment = {
-                        id: `deploy-${Date.now()}`,
-                        repoUrl,
-                        branch,
-                        status: 'deploying',
-                        startedAt: new Date().toISOString(),
-                        stages: [
-                            { name: 'Git Clone', status: 'running', progress: 30 },
-                            { name: 'AI Analysis', status: 'pending', progress: 0 },
-                            { name: 'Docker Build', status: 'pending', progress: 0 },
-                            { name: 'ECR Push', status: 'pending', progress: 0 },
-                            { name: 'Terraform Apply', status: 'pending', progress: 0 },
-                            { name: 'ECS Deploy', status: 'pending', progress: 0 },
-                            { name: 'Health Check', status: 'pending', progress: 0 },
-                        ]
-                    };
-                    onDeploy(deployment);
+                try {
+                    // Call real deployment API
+                    const response = await fetch(`${API_BASE_URL}/api/deploy`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            repository: repoUrl,
+                            branch: branch
+                        })
+                    });
+
+                    const data = await response.json();
+
+                    if (data.success) {
+                        const deployment = {
+                            id: data.deployment_id,
+                            repoUrl: data.repository,
+                            branch: data.branch,
+                            status: data.status,
+                            startedAt: new Date().toISOString()
+                        };
+                        onDeploy(deployment);
+                    } else {
+                        alert(`배포 시작 실패: ${data.message || '알 수 없는 오류'}`);
+                    }
+                } catch (error) {
+                    console.error('Deployment error:', error);
+                    alert('배포 시작 중 오류가 발생했습니다.');
+                } finally {
                     setDeploying(false);
-                }, 1000);
+                }
             };
 
             return (
@@ -746,43 +758,64 @@
 
         // Deployment Progress Modal Component
         function DeploymentProgressModal({ deployment, onClose }) {
-            const [stages, setStages] = useState(deployment.stages || [
-                { name: 'GitHub Actions Setup', status: 'complete', progress: 100, duration: '0.5s' },
-                { name: 'Git Clone', status: 'complete', progress: 100, duration: '0.3s' },
-                { name: 'AI Analysis', status: 'running', progress: 60, duration: '...' },
-                { name: 'Docker Build', status: 'pending', progress: 0, duration: '-' },
-                { name: 'ECR Push', status: 'pending', progress: 0, duration: '-' },
-                { name: 'Terraform Apply', status: 'pending', progress: 0, duration: '-' },
-                { name: 'ECS Update', status: 'pending', progress: 0, duration: '-' },
-                { name: 'Health Check', status: 'pending', progress: 0, duration: '-' },
-            ]);
+            const [deploymentStatus, setDeploymentStatus] = useState(null);
+            const [stages, setStages] = useState([]);
+            const [error, setError] = useState(null);
 
             useEffect(() => {
-                // Simulate progress updates
-                const interval = setInterval(() => {
-                    setStages(prev => {
-                        const updated = [...prev];
-                        const runningIndex = updated.findIndex(s => s.status === 'running');
+                // Fetch real deployment status from API
+                const fetchStatus = async () => {
+                    try {
+                        const response = await fetch(`${API_BASE_URL}/api/deploy/${deployment.id}/status`);
+                        const data = await response.json();
 
-                        if (runningIndex !== -1) {
-                            updated[runningIndex].progress = Math.min(100, updated[runningIndex].progress + 10);
+                        if (data.success) {
+                            setDeploymentStatus(data);
 
-                            if (updated[runningIndex].progress === 100) {
-                                updated[runningIndex].status = 'complete';
-                                updated[runningIndex].duration = '0.8s';
+                            // Map deployment steps to stages
+                            const totalSteps = data.total_steps || 8;
+                            const currentStep = data.current_step || 0;
 
-                                if (runningIndex < updated.length - 1) {
-                                    updated[runningIndex + 1].status = 'running';
+                            const stageNames = [
+                                'Git Clone & Setup',
+                                'AI Code Analysis',
+                                'Docker Build',
+                                'ECR Push',
+                                'Infrastructure Update',
+                                'ECS Deployment',
+                                'Health Check',
+                                'Verification'
+                            ];
+
+                            const newStages = stageNames.map((name, index) => {
+                                const stepNum = index + 1;
+                                let status = 'pending';
+                                let progress = 0;
+
+                                if (stepNum < currentStep) {
+                                    status = 'complete';
+                                    progress = 100;
+                                } else if (stepNum === currentStep) {
+                                    status = 'running';
+                                    progress = Math.min(90, data.progress || 50);
                                 }
-                            }
-                        }
 
-                        return updated;
-                    });
-                }, 500);
+                                return { name, status, progress, duration: status === 'complete' ? '✓' : '...' };
+                            });
+
+                            setStages(newStages);
+                        }
+                    } catch (err) {
+                        console.error('Failed to fetch deployment status:', err);
+                        setError('Failed to load deployment status');
+                    }
+                };
+
+                fetchStatus();
+                const interval = setInterval(fetchStatus, 3000); // Poll every 3 seconds
 
                 return () => clearInterval(interval);
-            }, []);
+            }, [deployment.id]);
 
             const getStageIcon = (status) => {
                 switch(status) {
