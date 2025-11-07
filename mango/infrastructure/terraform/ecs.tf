@@ -179,7 +179,7 @@ resource "aws_ecs_service" "app" {
 # =====================
 
 resource "aws_cloudwatch_log_group" "dashboard" {
-  count             = var.create_log_groups ? 1 : 0
+  count             = 1
   name              = "/aws/ecs/${var.app_name}-dashboard"
   retention_in_days = 7
 

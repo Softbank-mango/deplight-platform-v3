@@ -164,7 +164,7 @@ resource "aws_security_group" "ecs_tasks" {
 
 # CloudWatch Log Group
 resource "aws_cloudwatch_log_group" "app" {
-  count             = var.create_log_groups ? 1 : 0
+  count             = 1
   name              = var.log_group_name_app
   retention_in_days = 7
 
