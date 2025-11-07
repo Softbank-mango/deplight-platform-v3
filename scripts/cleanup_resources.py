@@ -141,6 +141,7 @@ def delete_cloudwatch_query_definitions():
     query_names = [
         f"{APP_NAME}-deployment-timeline",
         f"{APP_NAME}-performance-analysis",
+        f"{APP_NAME}-error-analysis",
     ]
 
     try:
