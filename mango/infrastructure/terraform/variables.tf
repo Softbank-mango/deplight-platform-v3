@@ -184,6 +184,61 @@ variable "create_vpc_endpoints" {
   default     = false
 }
 
+# Optional controls to integrate with existing environment
+variable "use_existing_roles" {
+  description = "Use pre-existing IAM roles instead of creating new ones"
+  type        = bool
+  default     = true
+}
+
+variable "ecs_execution_role_arn" {
+  description = "Existing ECS execution role ARN (required if use_existing_roles=true)"
+  type        = string
+  default     = "arn:aws:iam::513348493870:role/delightful-deploy-ecs-execution-role"
+}
+
+variable "ecs_task_role_arn" {
+  description = "Existing ECS task role ARN (required if use_existing_roles=true)"
+  type        = string
+  default     = "arn:aws:iam::513348493870:role/delightful-deploy-ecs-task-role"
+}
+
+variable "lambda_analyzer_role_arn" {
+  description = "Existing Lambda analyzer role ARN (required if use_existing_roles=true)"
+  type        = string
+  default     = "arn:aws:iam::513348493870:role/delightful-deploy-lambda-analyzer-role"
+}
+
+variable "create_log_groups" {
+  description = "Create CloudWatch log groups for ECS tasks"
+  type        = bool
+  default     = false
+}
+
+variable "log_group_name_app" {
+  description = "CloudWatch log group name for app"
+  type        = string
+  default     = "/aws/ecs/delightful-deploy"
+}
+
+variable "log_group_name_dashboard" {
+  description = "CloudWatch log group name for dashboard"
+  type        = string
+  default     = "/aws/ecs/delightful-deploy-dashboard"
+}
+
+variable "use_existing_artifacts_bucket" {
+  description = "Use pre-existing S3 artifacts bucket"
+  type        = bool
+  default     = true
+}
+
+variable "artifacts_bucket_name" {
+  description = "Artifacts bucket name (used if use_existing_artifacts_bucket=true)"
+  type        = string
+  default     = "delightful-deploy-artifacts-513348493870"
+}
+
 variable "cpu_target_value" {
   description = "Target CPU utilization for autoscaling"
   type        = number

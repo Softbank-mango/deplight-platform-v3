@@ -32,8 +32,8 @@ resource "aws_ecs_task_definition" "app" {
   requires_compatibilities = ["FARGATE"]
   cpu                      = var.container_cpu
   memory                   = var.container_memory
-  execution_role_arn       = aws_iam_role.ecs_execution_role.arn
-  task_role_arn            = aws_iam_role.ecs_task_role.arn
+  execution_role_arn       = var.use_existing_roles ? var.ecs_execution_role_arn : aws_iam_role.ecs_execution_role[0].arn
+  task_role_arn            = var.use_existing_roles ? var.ecs_task_role_arn : aws_iam_role.ecs_task_role[0].arn
 
   container_definitions = jsonencode([
     {
@@ -73,7 +73,7 @@ resource "aws_ecs_task_definition" "app" {
       logConfiguration = {
         logDriver = "awslogs"
         options = {
-          "awslogs-group"         = aws_cloudwatch_log_group.app.name
+          "awslogs-group"         = var.log_group_name_app
           "awslogs-region"        = var.aws_region
           "awslogs-stream-prefix" = "ecs"
         }
@@ -189,8 +189,8 @@ resource "aws_ecs_task_definition" "dashboard" {
   requires_compatibilities = ["FARGATE"]
   cpu                      = var.container_cpu
   memory                   = var.container_memory
-  execution_role_arn       = aws_iam_role.ecs_execution_role.arn
-  task_role_arn            = aws_iam_role.ecs_task_role.arn
+  execution_role_arn       = var.use_existing_roles ? var.ecs_execution_role_arn : aws_iam_role.ecs_execution_role[0].arn
+  task_role_arn            = var.use_existing_roles ? var.ecs_task_role_arn : aws_iam_role.ecs_task_role[0].arn
 
   container_definitions = jsonencode([
     {
@@ -213,7 +213,7 @@ resource "aws_ecs_task_definition" "dashboard" {
       logConfiguration = {
         logDriver = "awslogs"
         options = {
-          "awslogs-group"         = aws_cloudwatch_log_group.dashboard.name
+          "awslogs-group"         = var.log_group_name_dashboard
           "awslogs-region"        = var.aws_region
           "awslogs-stream-prefix" = "ecs"
         }

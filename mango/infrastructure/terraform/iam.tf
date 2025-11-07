@@ -1,5 +1,6 @@
 # ECS Task Execution Role
 resource "aws_iam_role" "ecs_execution_role" {
+  count = var.use_existing_roles ? 0 : 1
   name = "${var.app_name}-ecs-execution-role"
 
   assume_role_policy = jsonencode({
@@ -21,7 +22,8 @@ resource "aws_iam_role" "ecs_execution_role" {
 }
 
 resource "aws_iam_role_policy_attachment" "ecs_execution_role_policy" {
-  role       = aws_iam_role.ecs_execution_role.name
+  count      = var.use_existing_roles ? 0 : 1
+  role       = aws_iam_role.ecs_execution_role[0].name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
@@ -50,6 +52,7 @@ resource "aws_iam_role_policy" "ecs_execution_ssm_policy" {
 
 # ECS Task Role (for application runtime permissions)
 resource "aws_iam_role" "ecs_task_role" {
+  count = var.use_existing_roles ? 0 : 1
   name = "${var.app_name}-ecs-task-role"
 
   assume_role_policy = jsonencode({
@@ -72,8 +75,9 @@ resource "aws_iam_role" "ecs_task_role" {
 
 # Task role policies for X-Ray, CloudWatch, DynamoDB
 resource "aws_iam_role_policy" "ecs_task_policy" {
+  count = var.use_existing_roles ? 0 : 1
   name = "${var.app_name}-ecs-task-policy"
-  role = aws_iam_role.ecs_task_role.id
+  role = aws_iam_role.ecs_task_role[0].id
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -148,6 +152,7 @@ resource "aws_iam_role_policy_attachment" "codedeploy_policy" {
 
 # Lambda Execution Role for AI Analyzer
 resource "aws_iam_role" "lambda_analyzer" {
+  count = var.use_existing_roles ? 0 : 1
   name = "${var.app_name}-lambda-analyzer-role"
 
   assume_role_policy = jsonencode({
@@ -169,13 +174,15 @@ resource "aws_iam_role" "lambda_analyzer" {
 }
 
 resource "aws_iam_role_policy_attachment" "lambda_basic_execution" {
-  role       = aws_iam_role.lambda_analyzer.name
+  count      = var.use_existing_roles ? 0 : 1
+  role       = aws_iam_role.lambda_analyzer[0].name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
 resource "aws_iam_role_policy" "lambda_analyzer_policy" {
+  count = var.use_existing_roles ? 0 : 1
   name = "${var.app_name}-lambda-analyzer-policy"
-  role = aws_iam_role.lambda_analyzer.id
+  role = aws_iam_role.lambda_analyzer[0].id
 
   policy = jsonencode({
     Version = "2012-10-17"
