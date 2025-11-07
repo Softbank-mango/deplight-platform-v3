@@ -1,0 +1,62 @@
+name: Infra Apply (Terraform)
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - staging
+          - production
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ap-northeast-2
+
+jobs:
+  terraform-apply:
+    name: Apply Terraform
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.5.0'
+
+      - name: Terraform Init
+        working-directory: ./mango/infrastructure/terraform
+        run: terraform init
+
+      - name: Terraform Plan
+        working-directory: ./mango/infrastructure/terraform
+        run: |
+          terraform plan -out=tfplan
+
+      - name: Terraform Apply
+        working-directory: ./mango/infrastructure/terraform
+        run: terraform apply -auto-approve tfplan
+
+      - name: Verify ECS services
+        run: |
+          echo "Cluster: delightful-deploy-cluster"
+          aws ecs describe-services \
+            --cluster delightful-deploy-cluster \
+            --services delightful-deploy-service delightful-deploy-dashboard-service \
+            --output table || true
