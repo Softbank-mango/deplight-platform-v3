@@ -26,6 +26,8 @@ venv/
 .terraform/
 *.tfstate
 *.tfstate.*
+tfplan
+*.tfplan
 
 # Generated analyzer outputs (retain structure via .gitkeep)
 generated/analyzer-artifacts/*
