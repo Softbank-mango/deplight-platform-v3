@@ -105,6 +105,7 @@ jobs:
       cpu: ${{ steps.ai-analysis.outputs.cpu || '256' }}
       memory: ${{ steps.ai-analysis.outputs.memory || '512' }}
       release-tag: ${{ needs.create-release.outputs.release-tag }}
+      ecs-service-name: ${{ steps.select-service.outputs.service }}
 
     steps:
       - name: Parse repository URL
@@ -123,12 +124,21 @@ jobs:
             echo "Using default repository: ${{ github.repository }}"
           fi
 
-      - name: Checkout target repository
+      - name: Checkout user repository
+        if: github.event.inputs.target_repository
         uses: actions/checkout@v4
         with:
           repository: ${{ steps.parse-repo.outputs.repository }}
-          ref: ${{ github.event.inputs.target_branch || github.ref }}
-          path: ${{ github.event.inputs.target_repository && 'user_repo' || '.' }}
+          ref: ${{ github.event.inputs.target_branch || 'main' }}
+          path: user_repo
+
+      - name: Checkout platform repository
+        if: ${{ !github.event.inputs.target_repository }}
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.ref }}
+          path: .
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
@@ -197,12 +207,11 @@ jobs:
           done
 
           if [ $WAIT_TIME -ge $MAX_WAIT ]; then
-            echo "❌ Timeout waiting for AI analysis"
-            exit 1
+            echo "⚠️ Timeout waiting for AI analysis. Proceeding without AI artifacts."
           fi
 
           # Download buildspec to extract configuration
-          aws s3 cp "s3://${S3_BUCKET}/analysis/${ANALYSIS_ID}/buildspec" /tmp/buildspec.yml
+          aws s3 cp "s3://${S3_BUCKET}/analysis/${ANALYSIS_ID}/buildspec" /tmp/buildspec.yml || true
 
           # Extract port from buildspec or use defaults
           APP_PORT=8000
@@ -241,6 +250,24 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Detect build context and Dockerfile
+        id: detect
+        run: |
+          if [ -n "${{ github.event.inputs.target_repository }}" ]; then
+            BUILD_PATH="user_repo"
+          else
+            BUILD_PATH="./mango/dashboard"
+          fi
+          DOCKERFILE_PATH="$BUILD_PATH/Dockerfile"
+          echo "build-path=${BUILD_PATH}" >> $GITHUB_OUTPUT
+          if [ -f "$DOCKERFILE_PATH" ]; then
+            echo "has-dockerfile=true" >> $GITHUB_OUTPUT
+            echo "Dockerfile detected at $DOCKERFILE_PATH"
+          else
+            echo "has-dockerfile=false" >> $GITHUB_OUTPUT
+            echo "No Dockerfile at $DOCKERFILE_PATH"
+          fi
+
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
@@ -253,13 +280,27 @@ jobs:
           echo "image-tag=${IMAGE_TAG}" >> $GITHUB_OUTPUT
           echo "short-sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
 
-      - name: Build Docker image
+      - name: Build Docker image (Dockerfile)
+        if: steps.detect.outputs.has-dockerfile == 'true'
         run: |
-          # If target_repository is provided, build from user_repo, otherwise use demo_app
-          BUILD_PATH="${{ github.event.inputs.target_repository && 'user_repo' || './test/fastapi_demo' }}"
           docker build -t ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ steps.meta.outputs.image-tag }} \
                        -t ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:latest \
-                       $BUILD_PATH
+                       "${{ steps.detect.outputs.build-path }}"
+
+      - name: Set up Pack (Buildpacks)
+        if: steps.detect.outputs.has-dockerfile == 'false'
+        uses: buildpacks/pack-action@v5
+
+      - name: Build Docker image (Buildpacks fallback)
+        if: steps.detect.outputs.has-dockerfile == 'false'
+        run: |
+          IMAGE="${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ steps.meta.outputs.image-tag }}"
+          pack build "$IMAGE" \
+            --path "${{ steps.detect.outputs.build-path }}" \
+            --builder paketobuildpacks/builder-jammy-base \
+            --env "BP_LOG_LEVEL=info"
+          # Also tag latest
+          docker tag "$IMAGE" "${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:latest"
 
       - name: Run security scan
         run: |
@@ -393,15 +434,16 @@ jobs:
 
       - name: Update ECS service (rolling)
         run: |
+          SERVICE_NAME="${{ needs.build-and-test.outputs.ecs-service-name }}"
           aws ecs update-service \
             --cluster ${{ env.ECS_CLUSTER }} \
-            --service ${{ env.ECS_SERVICE }} \
+            --service "$SERVICE_NAME" \
             --task-definition ${{ steps.register.outputs.new-task-def-arn }} \
             --force-new-deployment > /dev/null
 
           aws ecs wait services-stable \
             --cluster ${{ env.ECS_CLUSTER }} \
-            --services ${{ env.ECS_SERVICE }}
+            --services "$SERVICE_NAME"
           echo "CodeDeploy Deployment ID: ${DEPLOYMENT_ID}"
 
       - name: Get ALB endpoint
@@ -614,4 +656,14 @@ jobs:
             echo "Uploaded logs to s3://${S3_BUCKET}/deployments/${RELEASE_TAG}/workflow-logs.zip"
           else
             echo "No logs downloaded"
+          fi
+      - name: Select ECS service (main vs dashboard)
+        id: select-service
+        run: |
+          if [ -n "${{ github.event.inputs.target_repository }}" ]; then
+            echo "service=${{ env.ECS_SERVICE }}" >> $GITHUB_OUTPUT
+            echo "Selected service: ${{ env.ECS_SERVICE }}"
+          else
+            echo "service=delightful-deploy-dashboard-service" >> $GITHUB_OUTPUT
+            echo "Selected service: delightful-deploy-dashboard-service"
           fi
