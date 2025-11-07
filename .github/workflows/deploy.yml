@@ -342,6 +342,8 @@ jobs:
     name: Deploy Infrastructure (Terraform)
     needs: build-and-test
     runs-on: ubuntu-latest
+    # Only run Terraform for platform (dashboard) deployments, not user apps
+    if: ${{ !github.event.inputs.target_repository }}
 
     steps:
       - name: Checkout code
@@ -408,12 +410,13 @@ jobs:
   deploy-ecs:
     name: Deploy to ECS (Rolling)
     needs: [build-and-test, deploy-infrastructure]
-    if: always() && needs.build-and-test.result == 'success'  # Terraform 실패해도 계속
+    if: always() && needs.build-and-test.result == 'success'
     runs-on: ubuntu-latest
 
     outputs:
       alb-dns: ${{ steps.alb.outputs.dns }}
       url: ${{ steps.alb.outputs.url }}
+      deployment-id: ${{ steps.deployment-info.outputs.deployment-id }}
 
     steps:
       - name: Configure AWS credentials (OIDC)
@@ -422,78 +425,223 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Get current task definition
-        id: task-def
+      - name: Set deployment info
+        id: deployment-info
         run: |
+          DEPLOYMENT_ID="${{ github.event.inputs.deployment_id || github.run_id }}"
+          echo "deployment-id=${DEPLOYMENT_ID}" >> $GITHUB_OUTPUT
+          echo "Deployment ID: ${DEPLOYMENT_ID}"
+
+      # Helper function for logging to DynamoDB
+      - name: Log progress - Docker Build Complete
+        run: |
+          DEPLOYMENT_ID="${{ steps.deployment-info.outputs.deployment-id }}"
+          TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+          aws dynamodb put-item \
+            --table-name delightful-deploy-deployment-logs \
+            --item "{
+              \"deployment_id\": {\"S\": \"${DEPLOYMENT_ID}\"},
+              \"timestamp\": {\"S\": \"${TIMESTAMP}\"},
+              \"step\": {\"N\": \"5\"},
+              \"message\": {\"S\": \"Docker image built and pushed to ECR\"},
+              \"log_type\": {\"S\": \"success\"}
+            }" || echo "Warning: Failed to log to DynamoDB"
+
+      - name: Deploy user app (AWS CLI)
+        if: github.event.inputs.target_repository
+        id: deploy-user-app
+        run: |
+          echo "🚀 Deploying user application..."
+
+          DEPLOYMENT_ID="${{ steps.deployment-info.outputs.deployment-id }}"
+          IMAGE_TAG="${{ needs.build-and-test.outputs.image-tag }}"
+          APP_PORT="${{ needs.build-and-test.outputs.app-port }}"
+          CPU="${{ needs.build-and-test.outputs.cpu }}"
+          MEMORY="${{ needs.build-and-test.outputs.memory }}"
+          REPO_NAME=$(echo "${{ github.event.inputs.target_repository }}" | sed 's|.*/||' | sed 's|\.git$||')
+          SERVICE_NAME="user-app-${DEPLOYMENT_ID}"
+
+          # Log: Creating resources
+          TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          aws dynamodb put-item \
+            --table-name delightful-deploy-deployment-logs \
+            --item "{
+              \"deployment_id\": {\"S\": \"${DEPLOYMENT_ID}\"},
+              \"timestamp\": {\"S\": \"${TIMESTAMP}\"},
+              \"step\": {\"N\": \"6\"},
+              \"message\": {\"S\": \"Creating ECS resources for ${REPO_NAME}\"},
+              \"log_type\": {\"S\": \"info\"}
+            }" || true
+
+          # 1. Create Target Group
+          echo "Creating target group..."
+          TG_ARN=$(aws elbv2 create-target-group \
+            --name "user-app-${DEPLOYMENT_ID}-tg" \
+            --protocol HTTP \
+            --port ${APP_PORT} \
+            --vpc-id ${{ secrets.VPC_ID }} \
+            --target-type ip \
+            --health-check-path /health \
+            --health-check-interval-seconds 30 \
+            --health-check-timeout-seconds 5 \
+            --healthy-threshold-count 2 \
+            --unhealthy-threshold-count 3 \
+            --query 'TargetGroups[0].TargetGroupArn' \
+            --output text)
+
+          echo "Target Group ARN: ${TG_ARN}"
+
+          # 2. Get ALB Listener ARN
+          LISTENER_ARN=$(aws elbv2 describe-listeners \
+            --load-balancer-arn $(aws elbv2 describe-load-balancers --names delightful-deploy-alb --query 'LoadBalancers[0].LoadBalancerArn' --output text) \
+            --query 'Listeners[0].ListenerArn' \
+            --output text)
+
+          # 3. Find next available priority (60+)
+          USED_PRIORITIES=$(aws elbv2 describe-rules --listener-arn ${LISTENER_ARN} --query 'Rules[].Priority' --output text | tr '\t' '\n' | grep -E '^[0-9]+$' | sort -n || echo "")
+          NEXT_PRIORITY=60
+          for used in $USED_PRIORITIES; do
+            if [ "$used" -ge "$NEXT_PRIORITY" ]; then
+              NEXT_PRIORITY=$((used + 1))
+            fi
+          done
+
+          # 4. Create ALB Listener Rule
+          echo "Creating ALB listener rule with priority ${NEXT_PRIORITY}..."
+          aws elbv2 create-rule \
+            --listener-arn ${LISTENER_ARN} \
+            --priority ${NEXT_PRIORITY} \
+            --conditions Field=path-pattern,Values="/app/${DEPLOYMENT_ID}/*" \
+            --actions Type=forward,TargetGroupArn=${TG_ARN}
+
+          # 5. Register Task Definition
+          echo "Registering task definition..."
+          TASK_DEF_JSON=$(cat <<EOF
+          {
+            "family": "${SERVICE_NAME}",
+            "networkMode": "awsvpc",
+            "requiresCompatibilities": ["FARGATE"],
+            "cpu": "${CPU}",
+            "memory": "${MEMORY}",
+            "executionRoleArn": "${{ secrets.ECS_EXECUTION_ROLE_ARN }}",
+            "taskRoleArn": "${{ secrets.ECS_TASK_ROLE_ARN }}",
+            "containerDefinitions": [{
+              "name": "${SERVICE_NAME}",
+              "image": "${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${IMAGE_TAG}",
+              "essential": true,
+              "portMappings": [{
+                "containerPort": ${APP_PORT},
+                "protocol": "tcp"
+              }],
+              "environment": [
+                {"name": "PORT", "value": "${APP_PORT}"},
+                {"name": "ENVIRONMENT", "value": "production"}
+              ],
+              "logConfiguration": {
+                "logDriver": "awslogs",
+                "options": {
+                  "awslogs-group": "/aws/ecs/user-apps",
+                  "awslogs-region": "${{ env.AWS_REGION }}",
+                  "awslogs-stream-prefix": "${DEPLOYMENT_ID}",
+                  "awslogs-create-group": "true"
+                }
+              }
+            }]
+          }
+          EOF
+          )
+
+          TASK_DEF_ARN=$(echo "$TASK_DEF_JSON" | aws ecs register-task-definition --cli-input-json file:///dev/stdin --query 'taskDefinition.taskDefinitionArn' --output text)
+          echo "Task Definition ARN: ${TASK_DEF_ARN}"
+
+          # Log: Creating ECS service
+          TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          aws dynamodb put-item \
+            --table-name delightful-deploy-deployment-logs \
+            --item "{
+              \"deployment_id\": {\"S\": \"${DEPLOYMENT_ID}\"},
+              \"timestamp\": {\"S\": \"${TIMESTAMP}\"},
+              \"step\": {\"N\": \"7\"},
+              \"message\": {\"S\": \"Creating ECS service: ${SERVICE_NAME}\"},
+              \"log_type\": {\"S\": \"info\"}
+            }" || true
+
+          # 6. Get public subnets
+          PUBLIC_SUBNETS=$(aws ec2 describe-subnets \
+            --filters "Name=vpc-id,Values=${{ secrets.VPC_ID }}" "Name=map-public-ip-on-launch,Values=true" \
+            --query 'Subnets[0:2].SubnetId' --output text | tr '\t' ',')
+
+          echo "Using subnets: ${PUBLIC_SUBNETS}"
+
+          # 7. Create ECS Service
+          echo "Creating ECS service..."
+          aws ecs create-service \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --service-name ${SERVICE_NAME} \
+            --task-definition ${TASK_DEF_ARN} \
+            --desired-count 1 \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[${PUBLIC_SUBNETS}],securityGroups=[${{ secrets.ECS_SECURITY_GROUP }}],assignPublicIp=ENABLED}" \
+            --load-balancers "targetGroupArn=${TG_ARN},containerName=${SERVICE_NAME},containerPort=${APP_PORT}"
+
+          echo "✅ User app deployed successfully!"
+          echo "service-name=${SERVICE_NAME}" >> $GITHUB_OUTPUT
+          echo "target-group-arn=${TG_ARN}" >> $GITHUB_OUTPUT
+          echo "path=/app/${DEPLOYMENT_ID}" >> $GITHUB_OUTPUT
+
+          # Log: Service created
+          TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          aws dynamodb put-item \
+            --table-name delightful-deploy-deployment-logs \
+            --item "{
+              \"deployment_id\": {\"S\": \"${DEPLOYMENT_ID}\"},
+              \"timestamp\": {\"S\": \"${TIMESTAMP}\"},
+              \"step\": {\"N\": \"7\"},
+              \"message\": {\"S\": \"ECS service created, waiting for tasks to start\"},
+              \"log_type\": {\"S\": \"success\"}
+            }" || true
+
+      - name: Deploy dashboard (Platform deployment)
+        if: ${{ !github.event.inputs.target_repository }}
+        id: deploy-dashboard
+        run: |
+          echo "🎨 Deploying platform dashboard..."
+
+          # Get current task definition
           TASK_DEF_ARN=$(aws ecs describe-services \
             --cluster ${{ env.ECS_CLUSTER }} \
-            --services ${{ env.ECS_SERVICE }} \
+            --services delightful-deploy-dashboard-service \
             --query 'services[0].taskDefinition' \
             --output text)
 
-          echo "task-def-arn=${TASK_DEF_ARN}" >> $GITHUB_OUTPUT
+          echo "Current task definition: ${TASK_DEF_ARN}"
 
-      - name: Describe task definition JSON
-        run: |
+          # Describe and prepare new task definition
           aws ecs describe-task-definition \
-            --task-definition ${{ steps.task-def.outputs.task-def-arn }} \
+            --task-definition ${TASK_DEF_ARN} \
             --query 'taskDefinition' > task-def.json
 
-      - name: Register new task definition (updated image)
-        id: register
-        run: |
           IMAGE="${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ needs.build-and-test.outputs.image-tag }}"
           cat task-def.json | jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)' > task-def-clean.json
           cat task-def-clean.json | jq --arg IMG "$IMAGE" '.containerDefinitions[0].image = $IMG' > task-def-updated.json
 
+          # Register new task definition
           NEW_TASK_DEF_ARN=$(aws ecs register-task-definition \
             --cli-input-json file://task-def-updated.json \
             --query 'taskDefinition.taskDefinitionArn' \
             --output text)
-          echo "new-task-def-arn=${NEW_TASK_DEF_ARN}" >> $GITHUB_OUTPUT
-          echo "Registered: ${NEW_TASK_DEF_ARN}"
 
-      - name: Resolve ECS service name
-        id: svc
-        run: |
-          DASH="delightful-deploy-dashboard-service"
-          DEFAULT="${{ env.ECS_SERVICE }}"
-          EXISTS=$(aws ecs describe-services \
-            --cluster "${{ env.ECS_CLUSTER }}" \
-            --services "$DASH" \
-            --query 'length(services[?serviceName!=null])' \
-            --output text || echo 0)
-          if [ "$EXISTS" = "1" ]; then
-            echo "service=$DASH" >> $GITHUB_OUTPUT
-            echo "Resolved service: $DASH"
-          else
-            echo "service=$DEFAULT" >> $GITHUB_OUTPUT
-            echo "Resolved service: $DEFAULT"
-          fi
+          echo "New task definition: ${NEW_TASK_DEF_ARN}"
 
-      - name: Update ECS service (rolling)
-        run: |
-          SERVICE_NAME="${{ steps.svc.outputs.service }}"
+          # Update dashboard service
+          aws ecs update-service \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --service delightful-deploy-dashboard-service \
+            --task-definition ${NEW_TASK_DEF_ARN} \
+            --force-new-deployment
 
-          # Only update task definition for main app service, not dashboard
-          if [ "$SERVICE_NAME" == "delightful-deploy-dashboard-service" ]; then
-            echo "Skipping task definition update for dashboard service"
-            echo "Dashboard uses its own task definition managed by Terraform"
-            echo "✅ Main app deployed successfully"
-          else
-            echo "Updating service: $SERVICE_NAME"
-            aws ecs update-service \
-              --cluster ${{ env.ECS_CLUSTER }} \
-              --service "$SERVICE_NAME" \
-              --task-definition ${{ steps.register.outputs.new-task-def-arn }} \
-              --force-new-deployment > /dev/null
-
-            aws ecs wait services-stable \
-              --cluster ${{ env.ECS_CLUSTER }} \
-              --services "$SERVICE_NAME"
-
-            echo "✅ Service updated successfully"
-          fi
+          echo "✅ Dashboard deployment initiated"
 
       - name: Get ALB endpoint
         id: alb
@@ -504,7 +652,32 @@ jobs:
             --output text)
 
           echo "dns=${ALB_DNS}" >> $GITHUB_OUTPUT
-          echo "url=http://${ALB_DNS}" >> $GITHUB_OUTPUT
+
+          # Set URL based on deployment type
+          if [ -n "${{ github.event.inputs.target_repository }}" ]; then
+            # User app
+            DEPLOYMENT_ID="${{ steps.deployment-info.outputs.deployment-id }}"
+            echo "url=http://${ALB_DNS}/app/${DEPLOYMENT_ID}" >> $GITHUB_OUTPUT
+          else
+            # Dashboard
+            echo "url=http://${ALB_DNS}/dashboard" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Log progress - Deployment Complete
+        run: |
+          DEPLOYMENT_ID="${{ steps.deployment-info.outputs.deployment-id }}"
+          TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          ALB_URL="${{ steps.alb.outputs.url }}"
+
+          aws dynamodb put-item \
+            --table-name delightful-deploy-deployment-logs \
+            --item "{
+              \"deployment_id\": {\"S\": \"${DEPLOYMENT_ID}\"},
+              \"timestamp\": {\"S\": \"${TIMESTAMP}\"},
+              \"step\": {\"N\": \"8\"},
+              \"message\": {\"S\": \"Deployment complete! URL: ${ALB_URL}\"},
+              \"log_type\": {\"S\": \"success\"}
+            }" || true
 
   smoke-test:
     name: Smoke Tests
