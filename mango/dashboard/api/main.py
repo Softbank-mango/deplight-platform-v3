@@ -42,8 +42,8 @@ ai_analysis_table = dynamodb.Table('delightful-deploy-ai-analysis')
 garden_state_table = dynamodb.Table('delightful-deploy-garden-state')
 deployment_logs_table = dynamodb.Table('delightful-deploy-deployment-logs')
 
-# ALB DNS (환경변수 또는 기본값)
-ALB_DNS = os.getenv('ALB_DNS', 'delightful-deploy-alb-796875577.ap-northeast-2.elb.amazonaws.com')
+# ALB DNS (환경변수에서 가져오기 - Terraform이 설정)
+ALB_DNS = os.getenv('ALB_DNS', 'delightful-deploy-alb-1219635926.ap-northeast-2.elb.amazonaws.com')
 
 # GitHub Configuration for triggering workflows
 GITHUB_TOKEN = os.getenv('GITHUB_TOKEN')  # Personal Access Token

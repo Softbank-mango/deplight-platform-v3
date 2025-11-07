@@ -268,7 +268,6 @@
         const { useState, useEffect } = React;
 
         const API_BASE_URL = window.location.origin;
-        const ALB_DNS = 'delightful-deploy-alb-796875577.ap-northeast-2.elb.amazonaws.com';
 
         // Main App Component
         function App() {
@@ -286,32 +285,18 @@
 
             const fetchServices = async () => {
                 try {
-                    // Mock data for now - replace with actual API call
-                    const mockServices = [
-                        {
-                            id: 'ecommerce-api',
-                            name: 'E-Commerce API',
-                            description: 'FastAPI-based E-Commerce Backend',
-                            framework: 'FastAPI',
-                            language: 'Python',
-                            status: 'running',
-                            url: `http://${ALB_DNS}/`,
-                            healthUrl: `http://${ALB_DNS}/health`,
-                            docsUrl: `http://${ALB_DNS}/docs`,
-                            deployedAt: '2025-11-07T12:34:56Z',
-                            commitSha: 'a1b2c3d',
-                            cluster: 'delightful-deploy-cluster',
-                            service: 'delightful-deploy-service',
-                            tasks: 2,
-                            cpu: '256',
-                            memory: '512',
-                            region: 'ap-northeast-2'
-                        }
-                    ];
-                    setServices(mockServices);
+                    const response = await fetch(`${API_BASE_URL}/api/services`);
+                    const data = await response.json();
+
+                    if (data.success && data.services) {
+                        setServices(data.services);
+                    } else {
+                        setServices([]);
+                    }
                     setLoading(false);
                 } catch (error) {
                     console.error('Failed to fetch services:', error);
+                    setServices([]);
                     setLoading(false);
                 }
             };

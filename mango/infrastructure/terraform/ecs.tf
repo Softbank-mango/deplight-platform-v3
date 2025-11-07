@@ -212,7 +212,9 @@ resource "aws_ecs_task_definition" "dashboard" {
 
       environment = [
         { name = "PORT", value = tostring(var.container_port) },
-        { name = "ENVIRONMENT", value = var.environment }
+        { name = "ENVIRONMENT", value = var.environment },
+        { name = "ALB_DNS", value = aws_lb.main.dns_name },
+        { name = "AWS_REGION", value = var.aws_region }
       ]
 
       logConfiguration = {
