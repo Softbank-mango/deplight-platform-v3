@@ -29,8 +29,9 @@ resource "aws_iam_role_policy_attachment" "ecs_execution_role_policy" {
 
 # Additional policy for SSM Parameter Store access (for secrets)
 resource "aws_iam_role_policy" "ecs_execution_ssm_policy" {
-  name = "${var.app_name}-ecs-execution-ssm-policy"
-  role = aws_iam_role.ecs_execution_role.id
+  count = var.use_existing_roles ? 0 : 1
+  name  = "${var.app_name}-ecs-execution-ssm-policy"
+  role  = aws_iam_role.ecs_execution_role[0].id
 
   policy = jsonencode({
     Version = "2012-10-17"

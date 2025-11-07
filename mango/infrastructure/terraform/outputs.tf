@@ -109,12 +109,12 @@ output "deployment_history_table" {
 # IAM Outputs
 output "ecs_execution_role_arn" {
   description = "ARN of the ECS execution role"
-  value       = aws_iam_role.ecs_execution_role.arn
+  value       = var.use_existing_roles ? var.ecs_execution_role_arn : aws_iam_role.ecs_execution_role[0].arn
 }
 
 output "ecs_task_role_arn" {
   description = "ARN of the ECS task role"
-  value       = aws_iam_role.ecs_task_role.arn
+  value       = var.use_existing_roles ? var.ecs_task_role_arn : aws_iam_role.ecs_task_role[0].arn
 }
 
 # CloudWatch Outputs
@@ -130,7 +130,7 @@ output "cloudwatch_dashboard_url" {
 
 output "cloudwatch_log_group" {
   description = "Name of the CloudWatch log group"
-  value       = aws_cloudwatch_log_group.app.name
+  value       = var.create_log_groups ? aws_cloudwatch_log_group.app[0].name : var.log_group_name_app
 }
 
 # Security Group Outputs
@@ -173,7 +173,7 @@ output "vpc_id" {
 output "quick_start_commands" {
   description = "Quick start commands for using the infrastructure"
   value = {
-    view_logs           = "aws logs tail ${aws_cloudwatch_log_group.app.name} --follow"
+    view_logs           = "aws logs tail ${var.create_log_groups ? aws_cloudwatch_log_group.app[0].name : var.log_group_name_app} --follow"
     view_dashboard      = "open https://console.aws.amazon.com/cloudwatch/home?region=${var.aws_region}#dashboards:name=${aws_cloudwatch_dashboard.main.dashboard_name}"
     describe_service    = "aws ecs describe-services --cluster ${aws_ecs_cluster.main.name} --services ${aws_ecs_service.app.name}"
     test_alb            = "curl http://${aws_lb.main.dns_name}/health"
