@@ -19,7 +19,8 @@ from pathlib import Path
 app = FastAPI(
     title="Delightful Deploy Dashboard",
     description="서비스 대시보드 API",
-    version="1.0.0"
+    version="1.0.0",
+    root_path="/dashboard"
 )
 
 # CORS 설정
