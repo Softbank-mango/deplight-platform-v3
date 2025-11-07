@@ -161,7 +161,7 @@ resource "local_file" "appspec_template" {
 resource "aws_lambda_function" "deployment_hook_before_allow_traffic" {
   count         = var.enable_blue_green_deployment ? 1 : 0
   function_name = "${var.app_name}-before-allow-traffic"
-  role          = aws_iam_role.lambda_analyzer.arn
+  role          = var.use_existing_roles ? var.lambda_analyzer_role_arn : aws_iam_role.lambda_analyzer[0].arn
   handler       = "index.handler"
   runtime       = "python3.11"
   timeout       = 30
@@ -184,7 +184,7 @@ resource "aws_lambda_function" "deployment_hook_before_allow_traffic" {
 resource "aws_lambda_function" "deployment_hook_after_allow_traffic" {
   count         = var.enable_blue_green_deployment ? 1 : 0
   function_name = "${var.app_name}-after-allow-traffic"
-  role          = aws_iam_role.lambda_analyzer.arn
+  role          = var.use_existing_roles ? var.lambda_analyzer_role_arn : aws_iam_role.lambda_analyzer[0].arn
   handler       = "index.handler"
   runtime       = "python3.11"
   timeout       = 30
