@@ -106,7 +106,11 @@ resource "aws_iam_role_policy" "ecs_task_policy" {
         ]
         Resource = [
           aws_dynamodb_table.garden_state.arn,
-          "${aws_dynamodb_table.garden_state.arn}/index/*"
+          "${aws_dynamodb_table.garden_state.arn}/index/*",
+          aws_dynamodb_table.deployment_logs.arn,
+          "${aws_dynamodb_table.deployment_logs.arn}/index/*",
+          aws_dynamodb_table.ai_analysis.arn,
+          aws_dynamodb_table.deployment_history.arn
         ]
       }
     ]
@@ -197,7 +201,9 @@ resource "aws_iam_role_policy" "lambda_analyzer_policy" {
         Resource = [
           aws_dynamodb_table.garden_state.arn,
           aws_dynamodb_table.ai_analysis.arn,
-          aws_dynamodb_table.deployment_history.arn
+          aws_dynamodb_table.deployment_history.arn,
+          aws_dynamodb_table.deployment_logs.arn,
+          "${aws_dynamodb_table.deployment_logs.arn}/index/*"
         ]
       },
       {

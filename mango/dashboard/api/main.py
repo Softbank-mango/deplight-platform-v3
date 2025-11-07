@@ -48,6 +48,7 @@ ALB_DNS = os.getenv('ALB_DNS', 'delightful-deploy-alb-796875577.ap-northeast-2.e
 # GitHub Configuration for triggering workflows
 GITHUB_TOKEN = os.getenv('GITHUB_TOKEN')  # Personal Access Token
 GITHUB_API_URL = "https://api.github.com"
+MANGO_REPO = os.getenv('MANGO_REPO', 'Softbank-mango/deplight-platform-v3')
 
 
 @app.get("/")
@@ -318,8 +319,8 @@ async def start_deployment(deployment: dict):
         # GitHub Actions Workflow Dispatch 트리거
         # 중요: Mango의 workflow를 트리거 (사용자 repo가 아님!)
         if GITHUB_TOKEN:
-            # Mango의 GitHub repo
-            mango_repo = "Softbank-mango/arc_test"
+            # Mango의 GitHub repo (환경변수로 재정의 가능)
+            mango_repo = MANGO_REPO
             workflow_file = "deploy.yml"
             dispatch_url = f"{GITHUB_API_URL}/repos/{mango_repo}/actions/workflows/{workflow_file}/dispatches"
 

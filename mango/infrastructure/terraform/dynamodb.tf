@@ -166,3 +166,38 @@ resource "aws_dynamodb_table" "deployment_history" {
     Name = "${var.app_name}-deployment-history"
   }
 }
+
+# DynamoDB Table for Deployment Logs (real-time log streaming)
+resource "aws_dynamodb_table" "deployment_logs" {
+  name         = "${var.app_name}-deployment-logs"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "deployment_id"
+  range_key    = "timestamp"
+
+  attribute {
+    name = "deployment_id"
+    type = "S"
+  }
+
+  attribute {
+    name = "timestamp"
+    type = "S"
+  }
+
+  point_in_time_recovery {
+    enabled = true
+  }
+
+  server_side_encryption {
+    enabled = true
+  }
+
+  ttl {
+    attribute_name = "ttl"
+    enabled        = false
+  }
+
+  tags = {
+    Name = "${var.app_name}-deployment-logs"
+  }
+}

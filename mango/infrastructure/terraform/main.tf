@@ -171,3 +171,34 @@ resource "aws_cloudwatch_log_group" "app" {
     Name = "${var.app_name}-logs"
   }
 }
+# S3 bucket for analyzer artifacts and deployment assets
+resource "aws_s3_bucket" "artifacts" {
+  bucket = "${var.app_name}-artifacts-${data.aws_caller_identity.current.account_id}"
+
+  tags = {
+    Name = "${var.app_name}-artifacts"
+  }
+}
+
+resource "aws_s3_bucket_versioning" "artifacts" {
+  bucket = aws_s3_bucket.artifacts.id
+
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "artifacts" {
+  bucket = aws_s3_bucket.artifacts.id
+
+  rule {
+    id     = "expire-old-artifacts"
+    status = "Enabled"
+
+    filter {}
+
+    noncurrent_version_expiration {
+      noncurrent_days = 30
+    }
+  }
+}

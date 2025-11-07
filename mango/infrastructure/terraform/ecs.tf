@@ -120,17 +120,18 @@ resource "aws_ecs_service" "app" {
     type = var.enable_blue_green_deployment ? "CODE_DEPLOY" : "ECS"
   }
 
-  # Circuit Breaker for fast and safe deployments (when not using CodeDeploy)
-  deployment_circuit_breaker {
-    enable   = var.enable_blue_green_deployment ? false : true
-    rollback = var.enable_blue_green_deployment ? false : true
+  # Circuit Breaker and deployment configuration (when not using CodeDeploy)
+  dynamic "deployment_circuit_breaker" {
+    for_each = var.enable_blue_green_deployment ? [] : [1]
+    content {
+      enable   = true
+      rollback = true
+    }
   }
 
-  # Fast deployment configuration (when not using CodeDeploy)
-  deployment_configuration {
-    minimum_healthy_percent = var.enable_blue_green_deployment ? 100 : 100
-    maximum_percent         = var.enable_blue_green_deployment ? 100 : 200
-  }
+  # Deployment configuration
+  deployment_minimum_healthy_percent = var.enable_blue_green_deployment ? 100 : 100
+  deployment_maximum_percent         = var.enable_blue_green_deployment ? 100 : 200
 
   # Load balancer configuration
   dynamic "load_balancer" {

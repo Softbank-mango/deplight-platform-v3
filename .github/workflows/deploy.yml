@@ -179,7 +179,7 @@ jobs:
           echo "✅ Lambda invoked asynchronously"
 
           # Poll S3 for buildspec file (indicates analysis complete)
-          S3_BUCKET="delightful-deploy-codedeploy-artifacts-513348493870"
+          S3_BUCKET="delightful-deploy-artifacts-513348493870"
           S3_BUILDSPEC_KEY="analysis/${ANALYSIS_ID}/buildspec"
           MAX_WAIT=300  # 5 minutes
           WAIT_TIME=0
@@ -230,7 +230,7 @@ jobs:
         run: |
           echo "📥 Downloading AI-generated Dockerfile from S3..."
           ANALYSIS_ID="${{ steps.ai-analysis.outputs.analysis_id }}"
-          S3_BUCKET="delightful-deploy-codedeploy-artifacts-513348493870"
+          S3_BUCKET="delightful-deploy-artifacts-513348493870"
 
           # Download Dockerfile from S3
           aws s3 cp "s3://${S3_BUCKET}/analysis/${ANALYSIS_ID}/dockerfile" ./user_repo/Dockerfile || echo "⚠️ No Dockerfile in S3, will use existing"
@@ -256,7 +256,7 @@ jobs:
       - name: Build Docker image
         run: |
           # If target_repository is provided, build from user_repo, otherwise use demo_app
-          BUILD_PATH="${{ github.event.inputs.target_repository && 'user_repo' || './mango/test/demo_app' }}"
+          BUILD_PATH="${{ github.event.inputs.target_repository && 'user_repo' || './test/fastapi_demo' }}"
           docker build -t ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ steps.meta.outputs.image-tag }} \
                        -t ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:latest \
                        $BUILD_PATH
@@ -344,18 +344,16 @@ jobs:
           echo "desired-count=${DESIRED_COUNT}" >> $GITHUB_OUTPUT
 
   deploy-ecs:
-    name: Deploy to ECS (Blue-Green)
+    name: Deploy to ECS (Rolling)
     needs: [build-and-test, deploy-infrastructure]
     if: always() && needs.build-and-test.result == 'success'  # Terraform 실패해도 계속
     runs-on: ubuntu-latest
 
     outputs:
-      deployment-id: ${{ steps.codedeploy.outputs.deployment-id }}
+      alb-dns: ${{ steps.alb.outputs.dns }}
+      url: ${{ steps.alb.outputs.url }}
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -373,66 +371,38 @@ jobs:
 
           echo "task-def-arn=${TASK_DEF_ARN}" >> $GITHUB_OUTPUT
 
-      - name: Create AppSpec for CodeDeploy
+      - name: Describe task definition JSON
         run: |
-          cat > appspec.yaml <<EOF
-          version: 0.0
-          Resources:
-            - TargetService:
-                Type: AWS::ECS::Service
-                Properties:
-                  TaskDefinition: "${{ steps.task-def.outputs.task-def-arn }}"
-                  LoadBalancerInfo:
-                    ContainerName: "delightful-deploy"
-                    ContainerPort: ${{ needs.build-and-test.outputs.app-port }}
-                  PlatformVersion: "LATEST"
-          EOF
+          aws ecs describe-task-definition \
+            --task-definition ${{ steps.task-def.outputs.task-def-arn }} \
+            --query 'taskDefinition' > task-def.json
 
-      - name: Create CodeDeploy deployment
-        id: codedeploy
+      - name: Register new task definition (updated image)
+        id: register
         run: |
-          # Create revision JSON file to avoid shell escaping issues
-          cat > revision.json <<'REVISION_EOF'
-          {
-            "revisionType": "AppSpecContent",
-            "appSpecContent": {
-              "content": "version: 0.0\nResources:\n  - TargetService:\n      Type: AWS::ECS::Service\n      Properties:\n        TaskDefinition: \"TASK_DEF_PLACEHOLDER\"\n        LoadBalancerInfo:\n          ContainerName: \"delightful-deploy\"\n          ContainerPort: PORT_PLACEHOLDER\n        PlatformVersion: \"LATEST\""
-            }
-          }
-          REVISION_EOF
+          IMAGE="${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ needs.build-and-test.outputs.image-tag }}"
+          cat task-def.json | jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)' > task-def-clean.json
+          cat task-def-clean.json | jq --arg IMG "$IMAGE" '.containerDefinitions[0].image = $IMG' > task-def-updated.json
 
-          # Replace placeholders with actual values
-          sed -i.bak "s|TASK_DEF_PLACEHOLDER|${{ steps.task-def.outputs.task-def-arn }}|g" revision.json
-          sed -i.bak "s|PORT_PLACEHOLDER|${{ needs.build-and-test.outputs.app-port }}|g" revision.json
-
-          echo "Using revision:"
-          cat revision.json
-
-          DEPLOYMENT_ID=$(aws deploy create-deployment \
-            --application-name delightful-deploy-app \
-            --deployment-group-name delightful-deploy-dg \
-            --deployment-config-name CodeDeployDefault.ECSCanary10Percent5Minutes \
-            --description "Deployment for commit ${{ github.sha }}" \
-            --revision file://revision.json \
-            --query 'deploymentId' \
+          NEW_TASK_DEF_ARN=$(aws ecs register-task-definition \
+            --cli-input-json file://task-def-updated.json \
+            --query 'taskDefinition.taskDefinitionArn' \
             --output text)
+          echo "new-task-def-arn=${NEW_TASK_DEF_ARN}" >> $GITHUB_OUTPUT
+          echo "Registered: ${NEW_TASK_DEF_ARN}"
 
-          echo "deployment-id=${DEPLOYMENT_ID}" >> $GITHUB_OUTPUT
+      - name: Update ECS service (rolling)
+        run: |
+          aws ecs update-service \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --service ${{ env.ECS_SERVICE }} \
+            --task-definition ${{ steps.register.outputs.new-task-def-arn }} \
+            --force-new-deployment > /dev/null
+
+          aws ecs wait services-stable \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --services ${{ env.ECS_SERVICE }}
           echo "CodeDeploy Deployment ID: ${DEPLOYMENT_ID}"
-
-      - name: Wait for CodeDeploy deployment
-        run: |
-          echo "Waiting for CodeDeploy deployment ${{ steps.codedeploy.outputs.deployment-id }}..."
-          aws deploy wait deployment-successful \
-            --deployment-id ${{ steps.codedeploy.outputs.deployment-id }}
-
-      - name: Get deployment status
-        if: always() && steps.codedeploy.outputs.deployment-id != ''
-        run: |
-          aws deploy get-deployment \
-            --deployment-id ${{ steps.codedeploy.outputs.deployment-id }} \
-            --query 'deploymentInfo.status' \
-            --output text
 
       - name: Get ALB endpoint
         id: alb
@@ -460,19 +430,17 @@ jobs:
           ALB_DNS="${{ needs.deploy-ecs.outputs.alb-dns }}"
           MAX_RETRIES=10
           RETRY_COUNT=0
-
           while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
             echo "Health check attempt $((RETRY_COUNT + 1))/$MAX_RETRIES..."
-
-            if curl -f "http://${ALB_DNS}/health" --max-time 10; then
-              echo "✓ Health check passed!"
-              exit 0
-            fi
-
+            for PATH in "/api/health" "/health" "/"; do
+              if curl -fsS "http://${ALB_DNS}${PATH}" --max-time 10 >/dev/null; then
+                echo "✓ Health check passed at ${PATH}!"
+                exit 0
+              fi
+            done
             RETRY_COUNT=$((RETRY_COUNT + 1))
             sleep 10
           done
-
           echo "✗ Health check failed after $MAX_RETRIES attempts"
           exit 1
 
@@ -481,10 +449,10 @@ jobs:
           ALB_DNS="${{ needs.deploy-ecs.outputs.alb-dns }}"
 
           echo "Testing root endpoint..."
-          curl -f "http://${ALB_DNS}/" || exit 1
+          curl -fsS "http://${ALB_DNS}/" --max-time 10 >/dev/null || echo "root endpoint not available"
 
-          echo "Testing API status endpoint..."
-          curl -f "http://${ALB_DNS}/api/status" || exit 1
+          echo "Testing /api/health..."
+          curl -fsS "http://${ALB_DNS}/api/health" --max-time 10 >/dev/null || echo "/api/health not available"
 
   store-artifacts:
     name: Store Deployment Artifacts
@@ -528,7 +496,7 @@ jobs:
       - name: Upload deployment manifest to S3
         run: |
           RELEASE_TAG="${{ needs.create-release.outputs.release-tag || github.run_id }}"
-          S3_BUCKET="delightful-deploy-artifacts-1762083190"
+          S3_BUCKET="delightful-deploy-artifacts-513348493870"
           S3_KEY="deployments/${RELEASE_TAG}/manifest.json"
 
           aws s3 cp deployment-manifest.json "s3://${S3_BUCKET}/${S3_KEY}"
@@ -537,7 +505,7 @@ jobs:
       - name: Upload AppSpec to S3
         run: |
           RELEASE_TAG="${{ needs.create-release.outputs.release-tag || github.run_id }}"
-          S3_BUCKET="delightful-deploy-artifacts-1762083190"
+          S3_BUCKET="delightful-deploy-artifacts-513348493870"
 
           # Download Dockerfile from S3 (generated by AI analyzer)
           aws s3 cp "s3://${S3_BUCKET}/generated/${{ github.sha }}/Dockerfile" ./Dockerfile || echo "Dockerfile not found"

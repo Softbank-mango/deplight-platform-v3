@@ -18,6 +18,7 @@ resource "aws_lambda_function" "ai_analyzer" {
       GARDEN_STATE_TABLE   = aws_dynamodb_table.garden_state.name
       AI_ANALYSIS_TABLE    = aws_dynamodb_table.ai_analysis.name
       DEPLOYMENT_TABLE     = aws_dynamodb_table.deployment_history.name
+      S3_BUCKET            = aws_s3_bucket.artifacts.bucket
       ENVIRONMENT          = var.environment
     }
   }

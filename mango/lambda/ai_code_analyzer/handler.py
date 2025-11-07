@@ -78,7 +78,8 @@ def _check_analysis_cache(repository: str, commit_sha: str) -> Optional[Dict]:
     """
     try:
         clients = get_clients()
-        ai_analysis_table = clients['dynamodb'].Table("delightful-deploy-ai-analysis")
+        table_name = os.getenv("AI_ANALYSIS_TABLE", "delightful-deploy-ai-analysis")
+        ai_analysis_table = clients['dynamodb'].Table(table_name)
 
         # Query by repository (using GSI)
         response = ai_analysis_table.query(
@@ -135,7 +136,9 @@ def _get_existing_deployments() -> List[Dict]:
     """Query DynamoDB for existing successful deployments to avoid conflicts"""
     try:
         # Query AI analysis table for successful deployments
-        ai_analysis_table = dynamodb.Table("delightful-deploy-ai-analysis")
+        clients = get_clients()
+        table_name = os.getenv("AI_ANALYSIS_TABLE", "delightful-deploy-ai-analysis")
+        ai_analysis_table = clients['dynamodb'].Table(table_name)
 
         response = ai_analysis_table.scan(
             FilterExpression="attribute_exists(project_info)",
@@ -775,7 +778,7 @@ def _store_analysis_results(
     recommendation: str
 ) -> None:
     """Store analysis results in DynamoDB"""
-    table = dynamodb.Table(table_name)
+    table = get_clients()['dynamodb'].Table(table_name)
 
     item = {
         "analysis_id": analysis_id,
@@ -806,7 +809,7 @@ def _upload_specs_to_s3(bucket: str, analysis_id: str, specs: Dict) -> Dict[str,
         key = f"analysis/{analysis_id}/{spec_name}"
 
         try:
-            s3.put_object(
+            get_clients()['s3'].put_object(
                 Bucket=bucket,
                 Key=key,
                 Body=content.encode("utf-8"),
