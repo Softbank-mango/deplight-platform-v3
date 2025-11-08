@@ -766,10 +766,12 @@ jobs:
         run: |
           echo "Testing deployment base URL..."
           BASE_URL="${{ needs.deploy-ecs.outputs.url || format('http://{0}', needs.deploy-ecs.outputs.alb-dns) }}"
-          /usr/bin/curl -fsS "${BASE_URL}" --max-time 10 >/dev/null || echo "base URL not available (may be expected if app has no root)"
+          # Ensure trailing slash to match ALB path rule "/app/<id>/*"
+          BASE_URL_SLASH="${BASE_URL%/}/"
+          /usr/bin/curl -fsS "${BASE_URL_SLASH}" --max-time 10 >/dev/null || echo "base URL not available (may be expected if app has no root)"
 
           echo "Testing /api/health..."
-          /usr/bin/curl -fsS "http://${ALB_DNS}/api/health" --max-time 10 >/dev/null || echo "/api/health not available"
+          /usr/bin/curl -fsS "${BASE_URL%/}/api/health" --max-time 10 >/dev/null || echo "/api/health not available"
 
   store-artifacts:
     name: Store Deployment Artifacts
