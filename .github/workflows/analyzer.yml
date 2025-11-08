@@ -121,7 +121,7 @@ jobs:
 
           # Fetch existing env vars and merge
           EXISTING=$(aws lambda get-function-configuration --function-name "$FN" --region "$REGION" --query 'Environment.Variables' --output json || echo '{}')
-          UPDATED=$(echo "$EXISTING" | jq --arg b "$BUCKET" --arg t "$TABLE" '. + {S3_BUCKET: $b, AI_ANALYSIS_TABLE: $t}')
+          UPDATED=$(echo "$EXISTING" | jq -c --arg b "$BUCKET" --arg t "$TABLE" '. + {S3_BUCKET: $b, AI_ANALYSIS_TABLE: $t}')
           aws lambda update-function-configuration \
             --function-name "$FN" \
             --region "$REGION" \
