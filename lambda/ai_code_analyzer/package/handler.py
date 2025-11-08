@@ -790,19 +790,19 @@ def lambda_handler(event, context):
 
     # Get API key from SSM
     api_key = _get_secret_from_ssm(
-        os.getenv("LETSUR_API_KEY_PARAM", "/delightful/letsur/api_key")
+        os.getenv("OPENAI_API_KEY_PARAM", "/delightful/openai/api_key")
     )
 
     if not api_key:
-        print("❌ ERROR: Letsur API key not found in SSM")
+        print("❌ ERROR: OpenAI API key not found in SSM")
         return {
             "statusCode": 500,
             "body": json.dumps({"error": "API key not configured"})
         }
 
     # Get API configuration
-    base_url = os.getenv("LETSUR_BASE_URL", "https://gateway.letsur.ai/v1")
-    model = os.getenv("LETSUR_MODEL", "gpt-5")
+    base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+    model = os.getenv("OPENAI_MODEL", "gpt-4")
 
     print(f"✅ OpenAI API configured (base_url={base_url}, model={model})")
 
