@@ -562,7 +562,10 @@ def _fix_dockerfile_syntax(dockerfile: str, project_info: Dict[str, Any], file_l
                 if 'python' in line.lower() and 'uvicorn' not in line.lower():
                     # Use the detected Python entrypoint from file_list
                     module_name = python_entrypoint.replace('.py', '')
-                    fixed_line = f'CMD ["uvicorn", "{module_name}:app", "--host", "0.0.0.0", "--port", "8000"]'
+                    fixed_line = (
+                        f'CMD ["/bin/sh", "-lc", '
+                        f'"uvicorn {module_name}:app --host 0.0.0.0 --port ${'{'}PORT:-8000{'}'} --root-path ${'{'}BASE_URL_PATH:-/}{'}'}"]'
+                    )
                     corrections_made.append(f"Fixed FastAPI CMD: {line.strip()} → {fixed_line} (using detected entrypoint: {python_entrypoint})")
                     fixed_lines.append(fixed_line)
                     print(f"✅ Fixed FastAPI CMD to use detected entrypoint: {python_entrypoint} → {module_name}:app")
@@ -1020,7 +1023,7 @@ def _get_start_command(project_info: Dict[str, Any]) -> str:
     # Python
     if "python" in primary_lang:
         if any("fastapi" in f for f in frameworks):
-            return "uvicorn app.main:app --host 0.0.0.0 --port 8000"
+            return "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --root-path ${BASE_URL_PATH:-/}"
         elif any("django" in f for f in frameworks):
             return "gunicorn myproject.wsgi:application --bind 0.0.0.0:8000"
         elif any("flask" in f for f in frameworks):

@@ -63,7 +63,8 @@ def get_start_command(project_info: Dict[str, Any]) -> str:
         if any("streamlit" in f for f in frameworks):
             return f"[\"streamlit\", \"run\", \"app.py\", \"--server.port={port}\", \"--server.address=0.0.0.0\", \"--server.headless=true\"]"
         elif any("fastapi" in f for f in frameworks):
-            return "[\"uvicorn\", \"app.main:app\", \"--host\", \"0.0.0.0\", \"--port\", \"8000\"]"
+            # Use shell form to allow env expansion for BASE_URL_PATH and PORT
+            return "[\"/bin/sh\", \"-lc\", \"uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --root-path ${BASE_URL_PATH:-/}\"]"
         elif any("django" in f for f in frameworks):
             return "[\"gunicorn\", \"myproject.wsgi:application\", \"--bind\", \"0.0.0.0:8000\"]"
         elif any("flask" in f for f in frameworks):
