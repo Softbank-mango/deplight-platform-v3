@@ -1,0 +1,211 @@
+# Delightful Deploy Configuration
+# This file allows you to customize the deployment pipeline
+
+version: "1.0"
+
+# Project metadata
+project:
+  name: "delightful-deploy"
+  description: "AI-powered deployment automation system"
+  team: "SoftBank Hackathon 2025"
+
+# Build configuration
+build:
+  # Docker build context
+  context: "."
+  dockerfile: "Dockerfile"
+
+  # Build arguments
+  args:
+    ENVIRONMENT: "production"
+
+  # Cache configuration
+  cache:
+    enabled: true
+    layers:
+      - "/app/node_modules"
+      - "/root/.cache/pip"
+
+# Deployment configuration
+deployment:
+  # Strategy: rolling, blue-green, canary
+  strategy: "blue-green"
+
+  # Auto-rollback on failure
+  auto_rollback: true
+
+  # Health check settings
+  health_check:
+    path: "/health"
+    interval: 30
+    timeout: 5
+    healthy_threshold: 2
+    unhealthy_threshold: 3
+
+  # Traffic shifting (for canary/blue-green)
+  traffic_config:
+    type: "TimeBasedCanary"
+    canary_percentage: 10
+    canary_interval: 5  # minutes
+
+# Resource allocation
+resources:
+  # CPU units (256 = 0.25 vCPU)
+  cpu: 256
+
+  # Memory in MiB
+  memory: 512
+
+  # Desired task count
+  desired_count: 2
+
+  # Auto-scaling
+  autoscaling:
+    enabled: true
+    min_capacity: 2
+    max_capacity: 10
+
+    # Scaling metrics
+    metrics:
+      cpu:
+        target: 70
+        scale_in_cooldown: 300
+        scale_out_cooldown: 60
+      memory:
+        target: 80
+        scale_in_cooldown: 300
+        scale_out_cooldown: 60
+
+# Environment variables
+environment:
+  # These will be injected into the container
+  APP_NAME: "delightful-deploy"
+  LOG_LEVEL: "info"
+  PORT: "8000"
+
+# Secrets (stored in AWS Parameter Store/Secrets Manager)
+secrets:
+  - name: "DATABASE_URL"
+    valueFrom: "/delightful/database/url"
+
+  - name: "REDIS_URL"
+    valueFrom: "/delightful/redis/url"
+
+  - name: "API_KEY"
+    valueFrom: "/delightful/api/key"
+
+# Monitoring & Observability
+monitoring:
+  # CloudWatch Logs
+  logs:
+    retention_days: 7
+    level: "info"
+
+  # AWS X-Ray tracing
+  xray:
+    enabled: true
+    sampling_rate: 0.1  # 10% of requests
+
+  # Custom metrics
+  metrics:
+    - name: "request_count"
+      namespace: "DelightfulDeploy"
+      dimensions:
+        - name: "Environment"
+          value: "production"
+
+  # Alarms
+  alarms:
+    - name: "high_cpu"
+      metric: "CPUUtilization"
+      threshold: 80
+      comparison: "GreaterThanThreshold"
+      evaluation_periods: 2
+      datapoints_to_alarm: 2
+
+    - name: "high_error_rate"
+      metric: "5XXError"
+      threshold: 5
+      comparison: "GreaterThanThreshold"
+      evaluation_periods: 1
+
+# Notifications
+notifications:
+  slack:
+    enabled: true
+    webhook_param: "/delightful/slack/webhook_url"
+    events:
+      - deployment_started
+      - deployment_succeeded
+      - deployment_failed
+      - rollback_triggered
+
+  email:
+    enabled: false
+    recipients:
+      - "team@example.com"
+
+# Testing
+testing:
+  # Pre-deployment tests
+  pre_deploy:
+    - name: "lint"
+      command: "npm run lint"
+
+    - name: "unit_tests"
+      command: "npm test"
+
+    - name: "security_scan"
+      command: "npm audit"
+
+  # Post-deployment smoke tests
+  smoke_tests:
+    - name: "health_check"
+      endpoint: "/health"
+      expected_status: 200
+
+    - name: "api_status"
+      endpoint: "/api/status"
+      expected_status: 200
+
+# AI Analyzer preferences
+ai_analyzer:
+  # Enable AI-powered analysis
+  enabled: true
+
+  # Analysis triggers
+  triggers:
+    - push
+    - pull_request
+
+  # What to analyze
+  analyze:
+    - dependencies
+    - security_vulnerabilities
+    - performance_hints
+    - cost_estimation
+    - traffic_prediction
+
+  # Auto-generate suggestions
+  suggestions:
+    dockerfile: true
+    terraform_vars: true
+    github_actions: false  # Already have custom workflows
+
+# Advanced features
+advanced:
+  # Blue-Green deployment configuration
+  blue_green:
+    termination_wait_time: 5  # minutes
+    test_traffic_port: 8080
+
+  # Database migration
+  migrations:
+    enabled: false
+    command: "npm run migrate"
+    timeout: 300  # seconds
+
+  # Feature flags
+  feature_flags:
+    enabled: false
+    provider: "launchdarkly"  # or "aws_appconfig"

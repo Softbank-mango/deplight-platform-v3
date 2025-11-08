@@ -264,7 +264,7 @@ jobs:
           if [ -n "${{ github.event.inputs.target_repository }}" ]; then
             BUILD_PATH="user_repo"
           else
-            BUILD_PATH="./mango/dashboard"
+            BUILD_PATH="./dashboard"
           fi
           DOCKERFILE_PATH="$BUILD_PATH/Dockerfile"
           echo "build-path=${BUILD_PATH}" >> $GITHUB_OUTPUT
@@ -385,11 +385,11 @@ jobs:
           terraform_version: "1.5.0"
 
       - name: Terraform Init
-        working-directory: ./mango/infrastructure/terraform
+        working-directory: ./infrastructure/terraform
         run: terraform init
 
       - name: Terraform Plan
-        working-directory: ./mango/infrastructure/terraform
+        working-directory: ./infrastructure/terraform
         run: |
           terraform plan \
             -var="image_tag=${{ needs.build-and-test.outputs.image-tag }}" \
@@ -400,7 +400,7 @@ jobs:
             -out=tfplan
 
       - name: Terraform Apply
-        working-directory: ./mango/infrastructure/terraform
+        working-directory: ./infrastructure/terraform
         run: terraform apply -auto-approve tfplan
 
       - name: Verify infrastructure (ECS services)

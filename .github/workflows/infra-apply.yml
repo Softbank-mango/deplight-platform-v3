@@ -41,16 +41,16 @@ jobs:
           terraform_version: '1.5.0'
 
       - name: Terraform Init
-        working-directory: ./mango/infrastructure/terraform
+        working-directory: ./infrastructure/terraform
         run: terraform init
 
       - name: Terraform Plan
-        working-directory: ./mango/infrastructure/terraform
+        working-directory: ./infrastructure/terraform
         run: |
           terraform plan -out=tfplan
 
       - name: Terraform Apply
-        working-directory: ./mango/infrastructure/terraform
+        working-directory: ./infrastructure/terraform
         run: terraform apply -auto-approve tfplan
 
       - name: Verify ECS services

@@ -1,0 +1,120 @@
+# VPC Endpoints for ECS tasks in private subnets
+# Required for ECS tasks to access AWS services without NAT Gateway
+
+# Security group for VPC endpoints
+resource "aws_security_group" "vpc_endpoints" {
+  count      = var.create_vpc_endpoints ? 1 : 0
+  name_prefix = "${var.app_name}-vpc-endpoints-"
+  description = "Security group for VPC endpoints"
+  vpc_id      = var.vpc_id
+
+  ingress {
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = [data.aws_vpc.main.cidr_block]
+    description = "Allow HTTPS from VPC"
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "Allow all outbound"
+  }
+
+  lifecycle {
+    create_before_destroy = true
+  }
+
+  tags = {
+    Name = "${var.app_name}-vpc-endpoints-sg"
+  }
+}
+
+# SSM VPC Endpoint (for secrets retrieval)
+resource "aws_vpc_endpoint" "ssm" {
+  count              = var.create_vpc_endpoints ? 1 : 0
+  vpc_id              = var.vpc_id
+  service_name        = "com.amazonaws.${var.aws_region}.ssm"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = var.private_subnet_ids
+  security_group_ids  = [aws_security_group.vpc_endpoints[0].id]
+  private_dns_enabled = true
+
+  tags = {
+    Name = "${var.app_name}-ssm-endpoint"
+  }
+}
+
+# ECR API VPC Endpoint (for Docker image metadata)
+resource "aws_vpc_endpoint" "ecr_api" {
+  count              = var.create_vpc_endpoints ? 1 : 0
+  vpc_id              = var.vpc_id
+  service_name        = "com.amazonaws.${var.aws_region}.ecr.api"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = var.private_subnet_ids
+  security_group_ids  = [aws_security_group.vpc_endpoints[0].id]
+  private_dns_enabled = true
+
+  tags = {
+    Name = "${var.app_name}-ecr-api-endpoint"
+  }
+}
+
+# ECR DKR VPC Endpoint (for Docker image layers)
+resource "aws_vpc_endpoint" "ecr_dkr" {
+  count              = var.create_vpc_endpoints ? 1 : 0
+  vpc_id              = var.vpc_id
+  service_name        = "com.amazonaws.${var.aws_region}.ecr.dkr"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = var.private_subnet_ids
+  security_group_ids  = [aws_security_group.vpc_endpoints[0].id]
+  private_dns_enabled = true
+
+  tags = {
+    Name = "${var.app_name}-ecr-dkr-endpoint"
+  }
+}
+
+# CloudWatch Logs VPC Endpoint (for container logs)
+resource "aws_vpc_endpoint" "logs" {
+  count              = var.create_vpc_endpoints ? 1 : 0
+  vpc_id              = var.vpc_id
+  service_name        = "com.amazonaws.${var.aws_region}.logs"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = var.private_subnet_ids
+  security_group_ids  = [aws_security_group.vpc_endpoints[0].id]
+  private_dns_enabled = true
+
+  tags = {
+    Name = "${var.app_name}-logs-endpoint"
+  }
+}
+
+# S3 Gateway VPC Endpoint (for ECR image layers)
+resource "aws_vpc_endpoint" "s3" {
+  count            = var.create_vpc_endpoints ? 1 : 0
+  vpc_id           = var.vpc_id
+  service_name     = "com.amazonaws.${var.aws_region}.s3"
+  vpc_endpoint_type = "Gateway"
+  route_table_ids  = var.route_table_ids
+
+  tags = {
+    Name = "${var.app_name}-s3-endpoint"
+  }
+}
+
+# DynamoDB Gateway VPC Endpoint (for DynamoDB access without NAT)
+resource "aws_vpc_endpoint" "dynamodb" {
+  count            = var.create_vpc_endpoints ? 1 : 0
+  vpc_id           = var.vpc_id
+  service_name     = "com.amazonaws.${var.aws_region}.dynamodb"
+  vpc_endpoint_type = "Gateway"
+  route_table_ids  = var.route_table_ids
+
+  tags = {
+    Name = "${var.app_name}-dynamodb-endpoint"
+  }
+}

@@ -3,7 +3,7 @@
 
 set -e
 
-TERRAFORM_DIR="/Users/jaeseokhan/Desktop/Work/softbank/deplight-platform/mango/infrastructure/terraform"
+TERRAFORM_DIR="/Users/jaeseokhan/Desktop/Work/softbank/deplight-platfor./infrastructure/terraform"
 APP_NAME="delightful-deploy"
 AWS_REGION="ap-northeast-2"
 AWS_ACCOUNT_ID="513348493870"

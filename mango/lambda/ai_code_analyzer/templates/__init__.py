@@ -1,3 +1,0 @@
-"""
-Templates for deployment specifications
-"""
