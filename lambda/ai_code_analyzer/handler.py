@@ -381,6 +381,317 @@ def _remove_heredoc_from_dockerfile(dockerfile: str) -> str:
     return cleaned
 
 
+def _detect_python_entrypoint(file_list: List[str]) -> str:
+    """
+    Detect the main Python entrypoint file from a list of files.
+    Returns the most likely entrypoint filename.
+    """
+    # Priority order for Python entrypoints
+    candidates = [
+        'main.py',
+        'app.py',
+        'server.py',
+        'run.py',
+        '__main__.py',
+        'wsgi.py',
+        'asgi.py',
+        'manage.py'
+    ]
+
+    # Check for exact matches in priority order
+    for candidate in candidates:
+        for file in file_list:
+            if file.endswith(candidate) or file == candidate:
+                return candidate
+
+    # If no match, look for any .py file in root
+    root_py_files = [f for f in file_list if f.endswith('.py') and '/' not in f]
+    if root_py_files:
+        return root_py_files[0]
+
+    # Default fallback
+    return 'main.py'
+
+
+def _detect_node_entrypoint(file_list: List[str]) -> str:
+    """
+    Detect the main Node.js entrypoint file from a list of files.
+    Returns the most likely entrypoint filename.
+    """
+    # Priority order for Node.js entrypoints
+    candidates = [
+        'index.js',
+        'server.js',
+        'app.js',
+        'main.js',
+        'index.ts',
+        'server.ts',
+        'app.ts',
+        'main.ts'
+    ]
+
+    # Check for exact matches in priority order
+    for candidate in candidates:
+        for file in file_list:
+            if file.endswith(candidate) or file == candidate:
+                return candidate
+
+    # If no match, look for any .js or .ts file in root
+    root_files = [f for f in file_list if (f.endswith('.js') or f.endswith('.ts')) and '/' not in f]
+    if root_files:
+        return root_files[0]
+
+    # Default fallback
+    return 'index.js'
+
+
+def _detect_fastapi_from_dockerfile(dockerfile: str) -> bool:
+    """
+    Detect if this is likely a FastAPI project by checking if:
+    1. It exposes port 8000 (common FastAPI port)
+    2. It has a health endpoint check (common for web APIs)
+    3. Repository name contains 'fastapi' or 'api'
+
+    This is a heuristic-based approach since we don't have access to the actual files.
+    """
+    # Check if exposes port 8000 (common for FastAPI)
+    has_port_8000 = 'EXPOSE 8000' in dockerfile or 'expose 8000' in dockerfile.lower()
+
+    # Check if has health check (common for APIs)
+    has_healthcheck = 'HEALTHCHECK' in dockerfile and '/health' in dockerfile
+
+    # If both conditions are met, it's likely a web API
+    return has_port_8000 and has_healthcheck
+
+
+def _fix_dockerfile_syntax(dockerfile: str, project_info: Dict[str, Any], file_list: List[str] = None) -> str:
+    """
+    Post-process Dockerfile to fix common AI-generated syntax errors.
+    Fixes FROM statements with spaces, adds missing dependency installation, and fixes incorrect CMD statements.
+    """
+    import re
+
+    lines = dockerfile.split('\n')
+    fixed_lines = []
+    detected_language = project_info.get('primary_language', '').lower()
+    file_list = file_list or []
+
+    # Map common wrong patterns to correct image names
+    image_map = {
+        'python': 'python',
+        'node': 'node',
+        'node.js': 'node',
+        'nodejs': 'node',
+        'javascript': 'node',
+        'go': 'golang',
+        'golang': 'golang',
+        'ruby': 'ruby',
+        'java': 'openjdk',
+        'rust': 'rust'
+    }
+
+    corrections_made = []
+    has_npm_install = False
+    has_pip_install = False
+    last_copy_index = -1
+
+    # Detect correct entrypoint file
+    python_entrypoint = _detect_python_entrypoint(file_list) if detected_language == 'python' else 'main.py'
+    node_entrypoint = _detect_node_entrypoint(file_list) if detected_language in ['javascript', 'node', 'nodejs'] else 'index.js'
+
+    # Detect if this is a FastAPI project by analyzing the Dockerfile itself
+    is_fastapi = _detect_fastapi_from_dockerfile(dockerfile) if detected_language == 'python' else False
+    print(f"DEBUG: detected_language={detected_language}, is_fastapi={is_fastapi}")
+    print(f"DEBUG: Dockerfile content:\n{dockerfile[:500]}")
+    if is_fastapi:
+        print("🔍 Detected FastAPI project - will fix CMD to use uvicorn")
+
+    # First pass: detect if dependency installation exists and check for multi-stage build
+    in_final_stage = False
+    for i, line in enumerate(lines):
+        if re.search(r'npm\s+(install|ci)', line, re.IGNORECASE):
+            has_npm_install = True
+        if re.search(r'pip\s+install', line, re.IGNORECASE):
+            has_pip_install = True
+        if re.match(r'^\s*COPY\s+', line, re.IGNORECASE):
+            last_copy_index = i
+        # Track if we're in final stage of multi-stage build
+        if re.match(r'^FROM\s+\w+:\w+\s*$', line, re.IGNORECASE):  # FROM without AS means final stage
+            in_final_stage = True
+
+    in_build_stage = False
+    for i, line in enumerate(lines):
+        # Fix FROM statements with spaces like "FROM Python 3.11" or "FROM Node.js 20"
+        from_match = re.match(r'^FROM\s+([A-Za-z\.]+)\s+([0-9\.]+[a-z\-]*)\s*(AS\s+\w+)?', line, re.IGNORECASE)
+        if from_match:
+            image_name = from_match.group(1).lower().replace('.', '')
+            version = from_match.group(2)
+            as_clause = from_match.group(3) or ''
+
+            # Map to correct Docker Hub image name
+            correct_image = image_map.get(image_name, image_name)
+
+            # Reconstruct with colon syntax
+            fixed_line = f"FROM {correct_image}:{version}"
+            if as_clause:
+                fixed_line += f" {as_clause}"
+                in_build_stage = True
+            else:
+                in_build_stage = False  # Final stage
+
+            corrections_made.append(f"FROM {from_match.group(1)} {version} → FROM {correct_image}:{version}")
+            fixed_lines.append(fixed_line)
+            continue
+
+        # Remove useradd lines (they cause UID conflicts in base images)
+        if re.match(r'^\s*RUN\s+useradd', line, re.IGNORECASE):
+            corrections_made.append(f"Removed conflicting useradd: {line.strip()}")
+            continue
+
+        # Remove USER appuser lines (rely on base image default user instead)
+        if re.match(r'^\s*USER\s+appuser', line, re.IGNORECASE):
+            corrections_made.append(f"Removed USER appuser: {line.strip()}")
+            continue
+
+        # Fix CMD statements with wrong filenames
+        cmd_match = re.match(r'^CMD\s+\[', line)
+        if cmd_match and detected_language:
+            # Special handling for FastAPI projects - use uvicorn instead of python
+            if is_fastapi and detected_language == 'python':
+                # Check if CMD is using python instead of uvicorn
+                if 'python' in line.lower() and 'uvicorn' not in line.lower():
+                    # Use the detected Python entrypoint from file_list
+                    module_name = python_entrypoint.replace('.py', '')
+                    fixed_line = f'CMD ["uvicorn", "{module_name}:app", "--host", "0.0.0.0", "--port", "8000"]'
+                    corrections_made.append(f"Fixed FastAPI CMD: {line.strip()} → {fixed_line} (using detected entrypoint: {python_entrypoint})")
+                    fixed_lines.append(fixed_line)
+                    print(f"✅ Fixed FastAPI CMD to use detected entrypoint: {python_entrypoint} → {module_name}:app")
+                    continue
+
+            # Fix Python CMD with wrong filename
+            if detected_language == 'python' and ('app.py' in line or 'main.py' in line or 'server.py' in line):
+                # Extract current filename from CMD
+                filename_match = re.search(r'"([^"]*\.py)"', line)
+                if filename_match:
+                    current_file = filename_match.group(1)
+                    # If the current file is not the detected entrypoint, fix it
+                    if current_file != python_entrypoint:
+                        fixed_line = line.replace(current_file, python_entrypoint)
+                        corrections_made.append(f"Fixed Python entrypoint: {current_file} → {python_entrypoint}")
+                        fixed_lines.append(fixed_line)
+                        continue
+
+            # Fix Node.js CMD with wrong filename
+            elif detected_language in ['javascript', 'node', 'nodejs'] and ('index.js' in line or 'server.js' in line or 'app.js' in line):
+                filename_match = re.search(r'"([^"]*\.(?:js|ts))"', line)
+                if filename_match:
+                    current_file = filename_match.group(1)
+                    if current_file != node_entrypoint:
+                        fixed_line = line.replace(current_file, node_entrypoint)
+                        corrections_made.append(f"Fixed Node.js entrypoint: {current_file} → {node_entrypoint}")
+                        fixed_lines.append(fixed_line)
+                        continue
+
+            # Check if CMD uses wrong language command
+            if detected_language in ['javascript', 'node', 'nodejs'] and 'python' in line.lower():
+                # Fix Python CMD for Node.js project
+                fixed_line = f'CMD ["node", "{node_entrypoint}"]'
+                corrections_made.append(f"Fixed CMD: {line.strip()} → {fixed_line}")
+                fixed_lines.append(fixed_line)
+                continue
+            elif detected_language == 'python' and 'node' in line.lower():
+                # Fix Node CMD for Python project
+                fixed_line = f'CMD ["python", "{python_entrypoint}"]'
+                corrections_made.append(f"Fixed CMD: {line.strip()} → {fixed_line}")
+                fixed_lines.append(fixed_line)
+                continue
+
+        fixed_lines.append(line)
+
+        # Insert dependency installation after COPY if missing
+        # For Python projects: add pip install after COPY requirements.txt or COPY . . or COPY --from
+        if detected_language == 'python':
+            # Detect if this is a COPY line in the final (non-build) stage
+            is_copy_from_base = re.match(r'^\s*COPY\s+--from=', line, re.IGNORECASE)
+
+            # Check for COPY --from=base in final stage (multi-stage build)
+            if is_copy_from_base and not in_build_stage:
+                # In final stage of multi-stage build, we need to install dependencies
+                # because site-packages are not in /app directory
+                if any('requirements.txt' in f for f in file_list):
+                    # Look ahead to see if pip install is coming
+                    has_pip_next = False
+                    for j in range(i + 1, min(i + 5, len(lines))):  # Check next 5 lines
+                        if re.search(r'pip\s+install', lines[j], re.IGNORECASE):
+                            has_pip_next = True
+                            break
+
+                    if not has_pip_next:
+                        fixed_lines.append("RUN pip install --no-cache-dir -r requirements.txt")
+                        corrections_made.append("Added missing: RUN pip install --no-cache-dir -r requirements.txt (final stage)")
+
+            # Check for COPY requirements.txt in any stage
+            elif re.search(r'requirements\.txt', line, re.IGNORECASE) and re.match(r'^\s*COPY', line, re.IGNORECASE):
+                # Next line should be pip install
+                next_line_idx = i + 1
+                if next_line_idx < len(lines):
+                    next_line = lines[next_line_idx]
+                    if not re.search(r'pip\s+install', next_line, re.IGNORECASE):
+                        fixed_lines.append("RUN pip install --no-cache-dir -r requirements.txt")
+                        corrections_made.append("Added missing: RUN pip install --no-cache-dir -r requirements.txt")
+
+            # Check for COPY . . without --from (single stage build)
+            elif re.match(r'^\s*COPY\s+\.\s+\.\s*$', line, re.IGNORECASE) and not in_build_stage:
+                # In single-stage build or final stage, add pip install
+                if any('requirements.txt' in f for f in file_list):
+                    # Look ahead to see if pip install is coming
+                    has_pip_next = False
+                    for j in range(i + 1, min(i + 5, len(lines))):  # Check next 5 lines
+                        if re.search(r'pip\s+install', lines[j], re.IGNORECASE):
+                            has_pip_next = True
+                            break
+
+                    if not has_pip_next:
+                        fixed_lines.append("RUN pip install --no-cache-dir -r requirements.txt")
+                        corrections_made.append("Added missing: RUN pip install --no-cache-dir -r requirements.txt (single-stage)")
+
+        # For Node.js projects: add npm install after COPY package*.json or COPY . . or COPY --from
+        if detected_language in ['javascript', 'node', 'nodejs'] and not has_npm_install:
+            # Check for package.json in COPY line
+            if re.search(r'package.*\.json', line, re.IGNORECASE) and re.match(r'^\s*COPY', line, re.IGNORECASE):
+                # Next line should be npm install
+                next_line_idx = i + 1
+                if next_line_idx < len(lines):
+                    next_line = lines[next_line_idx]
+                    if not re.search(r'npm\s+(install|ci)', next_line, re.IGNORECASE):
+                        fixed_lines.append("RUN npm install --production")
+                        corrections_made.append("Added missing: RUN npm install --production")
+                        has_npm_install = True
+            # Check for COPY --from=base or COPY . . in multi-stage builds
+            elif re.match(r'^\s*COPY\s+(--from=\w+\s+)?.*\s+\.\s*$', line, re.IGNORECASE):
+                # After copying everything, check if we need to install dependencies
+                # Check if package.json exists in file_list
+                if any('package.json' in f for f in file_list):
+                    # Look ahead to see if npm install is coming
+                    has_npm_next = False
+                    for j in range(i + 1, min(i + 5, len(lines))):  # Check next 5 lines
+                        if re.search(r'npm\s+(install|ci)', lines[j], re.IGNORECASE):
+                            has_npm_next = True
+                            break
+
+                    if not has_npm_next:
+                        fixed_lines.append("RUN npm install --production")
+                        corrections_made.append("Added missing: RUN npm install --production (multi-stage)")
+                        has_npm_install = True
+
+    if corrections_made:
+        print("🔧 Dockerfile syntax corrections applied:")
+        for correction in corrections_made:
+            print(f"  - {correction}")
+
+    return '\n'.join(fixed_lines)
+
+
 def _generate_deployment_specs(
     base_url: str,
     api_key: str,
@@ -453,18 +764,49 @@ Generate COMPLETE specifications. Each file should be production-ready and fully
 - NEVER use: RUN <<'...' (inline scripts)
 - These syntaxes are NOT supported and will cause build failures!
 
+⛔ FROM STATEMENT REQUIREMENTS (CRITICAL - WILL FAIL IF NOT FOLLOWED):
+- MUST use official Docker Hub image format: `FROM <image>:<tag>` with COLON separator
+- ✅ CORRECT EXAMPLES:
+  - `FROM python:3.11-slim`
+  - `FROM node:20`
+  - `FROM golang:1.21-alpine`
+- ❌ WRONG EXAMPLES (DO NOT USE):
+  - `FROM Python 3.11` (WRONG - has space, no colon)
+  - `FROM Node.js 20` (WRONG - has space, no colon)
+  - `FROM python 3.11` (WRONG - has space instead of colon)
+- The image name MUST be lowercase
+- MUST use colon (:) to separate image name and tag
+- NO SPACES allowed in FROM statement
+- Use exact Docker Hub repository names: python, node, golang, ruby, openjdk
+
+⛔ CMD/ENTRYPOINT REQUIREMENTS (CRITICAL):
+- MUST match the detected language and framework
+- For Python FastAPI/Flask: `CMD ["python", "main.py"]` or `CMD ["uvicorn", "main:app", "--host", "0.0.0.0"]`
+- For Node.js/Express: `CMD ["node", "index.js"]` or `CMD ["npm", "start"]`
+- For Go: `CMD ["./app"]` or `CMD ["/app/main"]`
+- NEVER use wrong language commands (e.g., `CMD ["python", ...]` for a Node.js app)
+
 ⛔ MULTI-STAGE BUILD WARNING:
-- AVOID multi-stage builds UNLESS you properly copy Python packages
-- If using multi-stage build (FROM...AS builder), you MUST copy /usr/local/lib/python*/site-packages/
+- AVOID multi-stage builds UNLESS you properly copy packages
+- If using multi-stage build (FROM...AS builder), you MUST copy dependencies
 - RECOMMENDED: Use single-stage build for simplicity and reliability
-- Single-stage example:
+- Python example:
   FROM python:3.11-slim
   WORKDIR /app
   COPY requirements.txt .
   RUN pip install --no-cache-dir -r requirements.txt
   COPY . .
   EXPOSE 8000
-  CMD ["python", "main.py"]
+  CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+- Node.js example:
+  FROM node:20
+  WORKDIR /app
+  COPY package*.json ./
+  RUN npm install
+  COPY . .
+  EXPOSE 8000
+  CMD ["node", "index.js"]
 
 ✅ REQUIRED APPROACH for config files:
 - MUST use RUN echo commands with proper escaping
@@ -548,6 +890,10 @@ Return your response in this format:
                 specs["dockerfile"] = cleaned_dockerfile
             else:
                 print("✓ Dockerfile clean - no heredoc syntax detected")
+
+            # POST-PROCESSING: Fix FROM and CMD syntax errors
+            syntax_fixed_dockerfile = _fix_dockerfile_syntax(specs["dockerfile"], project_info, file_list)
+            specs["dockerfile"] = syntax_fixed_dockerfile
 
         print(f"Generated specs: {list(specs.keys())}")
         return specs
@@ -1010,6 +1356,11 @@ Server runs on port 8000.
             ai_analysis_table, analysis_id, repository, commit_sha,
             project_info, specs, recommendation
         )
+
+        # Step 4.5: Fix Dockerfile syntax errors (post-processing)
+        if specs.get("dockerfile"):
+            print("🔧 Applying Dockerfile syntax fixes...")
+            specs["dockerfile"] = _fix_dockerfile_syntax(specs["dockerfile"], project_info, file_list)
 
         # Step 5: Upload specs to S3
         print("☁️ Uploading specs to S3...")
