@@ -707,6 +707,48 @@ jobs:
             echo "url=http://${ALB_DNS}/dashboard" >> $GITHUB_OUTPUT
           fi
 
+      - name: Verify AWS deployment (ECS/ALB)
+        if: github.event.inputs.target_repository
+        id: verify-aws
+        run: |
+          set -euo pipefail
+          DEPLOYMENT_ID="${{ steps.deployment-info.outputs.deployment-id }}"
+          SERVICE_NAME="user-app-${DEPLOYMENT_ID}"
+          CLUSTER="${{ env.ECS_CLUSTER }}"
+          REGION="${{ env.AWS_REGION }}"
+          ALB_DNS="${{ steps.alb.outputs.dns }}"
+
+          echo "--- ECS Service ---"
+          aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE_NAME" --region "$REGION" \
+            --query 'services[0].{serviceName:serviceName,status:status,desiredCount:desiredCount,runningCount:runningCount,taskDefinition:taskDefinition}' --output table || true
+
+          TASK_DEF_ARN=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE_NAME" --region "$REGION" --query 'services[0].taskDefinition' --output text || echo "")
+          if [ -n "$TASK_DEF_ARN" ] && [ "$TASK_DEF_ARN" != "None" ]; then
+            echo "--- ECS Task Definition Image ---"
+            aws ecs describe-task-definition --task-definition "$TASK_DEF_ARN" --region "$REGION" \
+              --query 'taskDefinition.containerDefinitions[0].image' --output text || true
+          fi
+
+          echo "--- ALB Listener Rule for /app/${DEPLOYMENT_ID}/* ---"
+          LB_ARN=$(aws elbv2 describe-load-balancers --names delightful-deploy-alb --region "$REGION" --query 'LoadBalancers[0].LoadBalancerArn' --output text)
+          LISTENER_ARN=$(aws elbv2 describe-listeners --load-balancer-arn "$LB_ARN" --region "$REGION" --query 'Listeners[0].ListenerArn' --output text)
+          aws elbv2 describe-rules --listener-arn "$LISTENER_ARN" --region "$REGION" \
+            --query "Rules[?contains(join('', [].Conditions[?Field=='path-pattern'].Values[]), '/app/${DEPLOYMENT_ID}/*')].[Priority,RuleArn]" --output table || true
+
+          echo "--- Target Group Health ---"
+          TG_ARN=$(aws elbv2 describe-target-groups --names "user-app-${DEPLOYMENT_ID}-tg" --region "$REGION" --query 'TargetGroups[0].TargetGroupArn' --output text 2>/dev/null || echo "")
+          if [ -z "$TG_ARN" ] || [ "$TG_ARN" = "None" ]; then
+            TG_ARN=$(aws elbv2 describe-target-groups --region "$REGION" --query "TargetGroups[?contains(TargetGroupName, 'user-app-${DEPLOYMENT_ID}')].TargetGroupArn | [0]" --output text 2>/dev/null || echo "")
+          fi
+          if [ -n "$TG_ARN" ] && [ "$TG_ARN" != "None" ]; then
+            aws elbv2 describe-target-health --target-group-arn "$TG_ARN" --region "$REGION" --query 'TargetHealthDescriptions[*].TargetHealth.State' --output table || true
+          else
+            echo "Target group not found yet (may still be creating)"
+          fi
+
+          echo "--- CloudWatch Log Group exists? ---"
+          aws logs describe-log-groups --log-group-name-prefix "/aws/ecs/user-apps/${SERVICE_NAME}" --region "$REGION" --query 'logGroups[*].logGroupName' --output table || true
+
       - name: Log progress - Deployment Complete
         run: |
           DEPLOYMENT_ID="${{ steps.deployment-info.outputs.deployment-id }}"
