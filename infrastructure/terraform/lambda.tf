@@ -7,8 +7,8 @@ resource "aws_lambda_function" "ai_analyzer" {
   timeout       = 900  # 15 minutes for comprehensive analysis
   memory_size   = 1024
 
-  filename         = "${path.root}/build/ai_analyzer.zip"
-  source_code_hash = fileexists("${path.root}/build/ai_analyzer.zip") ? filebase64sha256("${path.root}/build/ai_analyzer.zip") : null
+  filename         = "../../build/ai_analyzer.zip"
+  source_code_hash = fileexists("../../build/ai_analyzer.zip") ? filebase64sha256("../../build/ai_analyzer.zip") : null
 
   environment {
     variables = {
