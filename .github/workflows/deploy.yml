@@ -150,6 +150,35 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Ensure DynamoDB tables exist (dev)
+        run: |
+          set -euo pipefail
+          REGION="${{ env.AWS_REGION }}"
+          HIST="deplight-platform-deployment-history"
+          LOGS="deplight-platform-deployment-logs"
+
+          echo "Ensuring DynamoDB table: $HIST"
+          if ! aws dynamodb describe-table --table-name "$HIST" --region "$REGION" >/dev/null 2>&1; then
+            aws dynamodb create-table \
+              --table-name "$HIST" \
+              --attribute-definitions AttributeName=id,AttributeType=S \
+              --key-schema AttributeName=id,KeyType=HASH \
+              --billing-mode PAY_PER_REQUEST \
+              --region "$REGION"
+            aws dynamodb wait table-exists --table-name "$HIST" --region "$REGION"
+          fi
+
+          echo "Ensuring DynamoDB table: $LOGS"
+          if ! aws dynamodb describe-table --table-name "$LOGS" --region "$REGION" >/dev/null 2>&1; then
+            aws dynamodb create-table \
+              --table-name "$LOGS" \
+              --attribute-definitions AttributeName=deployment_id,AttributeType=S \
+              --key-schema AttributeName=deployment_id,KeyType=HASH \
+              --billing-mode PAY_PER_REQUEST \
+              --region "$REGION"
+            aws dynamodb wait table-exists --table-name "$LOGS" --region "$REGION"
+          fi
+
       - name: Analyze user code with Lambda AI
         if: github.event.inputs.target_repository
         id: ai-analysis
