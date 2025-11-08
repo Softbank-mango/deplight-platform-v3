@@ -120,12 +120,11 @@ jobs:
           TABLE="${{ env.AI_ANALYSIS_TABLE }}"
 
           # Fetch existing env vars and merge
-          EXISTING=$(aws lambda get-function-configuration --function-name "$FN" --region "$REGION" --query 'Environment.Variables' --output json || echo '{}')
-          UPDATED=$(echo "$EXISTING" | jq -c --arg b "$BUCKET" --arg t "$TABLE" '. + {S3_BUCKET: $b, AI_ANALYSIS_TABLE: $t}')
-          aws lambda update-function-configuration \
-            --function-name "$FN" \
-            --region "$REGION" \
-            --environment "Variables=$UPDATED" >/dev/null
+          aws lambda get-function-configuration --function-name "$FN" --region "$REGION" --query 'Environment.Variables' --output json > env.json || echo '{}' > env.json
+          jq --arg fn "$FN" --arg b "$BUCKET" --arg t "$TABLE" \
+            '{FunctionName: $fn, Environment: {Variables: (. + {S3_BUCKET: $b, AI_ANALYSIS_TABLE: $t})}}' \
+            env.json > cli_input.json
+          aws lambda update-function-configuration --region "$REGION" --cli-input-json file://cli_input.json >/dev/null
 
       - name: Grant Lambda role access to S3/DynamoDB (dev-wide)
         env:
