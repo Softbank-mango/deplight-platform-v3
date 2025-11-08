@@ -592,8 +592,12 @@ jobs:
           echo "Task Definition JSON:"
           echo "$TASK_DEF_JSON" | jq '.'
 
-          # Register task definition
-          TASK_DEF_ARN=$(echo "$TASK_DEF_JSON" | aws ecs register-task-definition --cli-input-json file:///dev/stdin --query 'taskDefinition.taskDefinitionArn' --output text)
+          # Save to temporary file and register task definition
+          TASK_DEF_FILE=$(mktemp)
+          echo "$TASK_DEF_JSON" > "$TASK_DEF_FILE"
+
+          TASK_DEF_ARN=$(aws ecs register-task-definition --cli-input-json file://"$TASK_DEF_FILE" --query 'taskDefinition.taskDefinitionArn' --output text)
+          rm "$TASK_DEF_FILE"
           echo "Task Definition ARN: ${TASK_DEF_ARN}"
 
           # Log: Creating ECS service
