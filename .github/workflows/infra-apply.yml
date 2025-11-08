@@ -35,6 +35,21 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Package Lambda Function
+        run: |
+          cd lambda/ai_code_analyzer
+          pip install -r requirements.txt -t .
+          cd ../..
+          mkdir -p build
+          cd lambda/ai_code_analyzer
+          zip -r ../../build/ai_analyzer.zip . -x "*.pyc" -x "__pycache__/*" -x "*.git/*"
+          ls -lh ../../build/ai_analyzer.zip
+
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
