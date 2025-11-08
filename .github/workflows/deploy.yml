@@ -396,8 +396,11 @@ jobs:
     name: Deploy Infrastructure (Terraform)
     needs: build-and-test
     runs-on: ubuntu-latest
-    # Only run Terraform for platform (dashboard) deployments, not user apps
-    if: ${{ !github.event.inputs.target_repository }}
+    # Always run Terraform - it will handle both platform and user app deployments
+
+    outputs:
+      user_app_endpoint: ${{ steps.tf-outputs.outputs.user_app_endpoint }}
+      user_app_service: ${{ steps.tf-outputs.outputs.user_app_service }}
 
     steps:
       - name: Checkout code
@@ -413,25 +416,90 @@ jobs:
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.5.0"
+          terraform_wrapper: false  # Disable wrapper to get clean outputs
 
       - name: Terraform Init
         working-directory: ./infrastructure/terraform
         run: terraform init
 
+      - name: Prepare Terraform variables for user app
+        id: prepare-vars
+        run: |
+          if [ -n "${{ github.event.inputs.target_repository }}" ]; then
+            # User app deployment
+            echo "deploy_user_app=true" >> $GITHUB_OUTPUT
+
+            # Extract and sanitize repo name
+            REPO_URL="${{ github.event.inputs.target_repository }}"
+            REPO_NAME=$(echo "$REPO_URL" | sed 's|.*/||' | sed 's|\.git$||' | tr '[:upper:]' '[:lower:]')
+            DEPLOYMENT_ID="${{ github.run_id }}"
+
+            # Create unique app name
+            APP_NAME="user-app-${DEPLOYMENT_ID}"
+            echo "app_name=${APP_NAME}" >> $GITHUB_OUTPUT
+
+            # Path prefix for ALB routing
+            PATH_PREFIX="app/${DEPLOYMENT_ID}"
+            echo "path_prefix=${PATH_PREFIX}" >> $GITHUB_OUTPUT
+
+            # ECR repository URL (without tag)
+            ECR_REPO="${{ needs.build-and-test.outputs.ecr-repository }}"
+            ECR_URL="${{ env.ECR_REGISTRY }}/${ECR_REPO}"
+            echo "ecr_url=${ECR_URL}" >> $GITHUB_OUTPUT
+
+            echo "Deploying user app: ${APP_NAME}"
+            echo "Path: /${PATH_PREFIX}/*"
+            echo "Image: ${ECR_URL}:${{ needs.build-and-test.outputs.image-tag }}"
+          else
+            # Platform deployment
+            echo "deploy_user_app=false" >> $GITHUB_OUTPUT
+            echo "Deploying platform (dashboard)"
+          fi
+
       - name: Terraform Plan
         working-directory: ./infrastructure/terraform
         run: |
-          terraform plan \
-            -var="image_tag=${{ needs.build-and-test.outputs.image-tag }}" \
-            -var="commit_sha=${{ github.sha }}" \
-            -var="container_port=${{ needs.build-and-test.outputs.app-port }}" \
-            -var="container_cpu=${{ needs.build-and-test.outputs.cpu }}" \
-            -var="container_memory=${{ needs.build-and-test.outputs.memory }}" \
-            -out=tfplan
+          # Base variables for all deployments
+          TF_VARS="-var=image_tag=${{ needs.build-and-test.outputs.image-tag }}"
+          TF_VARS="$TF_VARS -var=commit_sha=${{ github.sha }}"
+          TF_VARS="$TF_VARS -var=container_port=${{ needs.build-and-test.outputs.app-port }}"
+          TF_VARS="$TF_VARS -var=container_cpu=${{ needs.build-and-test.outputs.cpu }}"
+          TF_VARS="$TF_VARS -var=container_memory=${{ needs.build-and-test.outputs.memory }}"
+
+          # Add user app variables if deploying a user app
+          if [ "${{ steps.prepare-vars.outputs.deploy_user_app }}" = "true" ]; then
+            TF_VARS="$TF_VARS -var=deploy_user_app=true"
+            TF_VARS="$TF_VARS -var=user_app_name=${{ steps.prepare-vars.outputs.app_name }}"
+            TF_VARS="$TF_VARS -var=user_app_repository_url=${{ github.event.inputs.target_repository }}"
+            TF_VARS="$TF_VARS -var=user_app_image=${{ steps.prepare-vars.outputs.ecr_url }}"
+            TF_VARS="$TF_VARS -var=user_app_image_tag=${{ needs.build-and-test.outputs.image-tag }}"
+            TF_VARS="$TF_VARS -var=user_app_port=${{ needs.build-and-test.outputs.app-port }}"
+            TF_VARS="$TF_VARS -var=user_app_cpu=${{ needs.build-and-test.outputs.cpu }}"
+            TF_VARS="$TF_VARS -var=user_app_memory=${{ needs.build-and-test.outputs.memory }}"
+            TF_VARS="$TF_VARS -var=user_app_path_prefix=${{ steps.prepare-vars.outputs.path_prefix }}"
+          fi
+
+          terraform plan $TF_VARS -out=tfplan
 
       - name: Terraform Apply
         working-directory: ./infrastructure/terraform
         run: terraform apply -auto-approve tfplan
+
+      - name: Extract Terraform outputs
+        id: tf-outputs
+        working-directory: ./infrastructure/terraform
+        run: |
+          if [ "${{ steps.prepare-vars.outputs.deploy_user_app }}" = "true" ]; then
+            # Extract user app outputs
+            USER_APP_ENDPOINT=$(terraform output -raw user_app_endpoint_url 2>/dev/null || echo "")
+            USER_APP_SERVICE=$(terraform output -raw user_app_service_name 2>/dev/null || echo "")
+
+            echo "user_app_endpoint=${USER_APP_ENDPOINT}" >> $GITHUB_OUTPUT
+            echo "user_app_service=${USER_APP_SERVICE}" >> $GITHUB_OUTPUT
+
+            echo "User app endpoint: ${USER_APP_ENDPOINT}"
+            echo "User app service: ${USER_APP_SERVICE}"
+          fi
 
       - name: Verify infrastructure (ECS services)
         id: infra-check
@@ -502,21 +570,18 @@ jobs:
               \"log_type\": {\"S\": \"success\"}
             }" || echo "Warning: Failed to log to DynamoDB"
 
-      - name: Deploy user app (AWS CLI)
+      - name: Deploy user app (Terraform-managed)
         if: github.event.inputs.target_repository
         id: deploy-user-app
         run: |
-          echo "🚀 Deploying user application..."
+          echo "🚀 User application deployed via Terraform!"
+          echo "User apps are now managed by Terraform for better infrastructure consistency."
 
           DEPLOYMENT_ID="${{ steps.deployment-info.outputs.deployment-id }}"
-          IMAGE_TAG="${{ needs.build-and-test.outputs.image-tag }}"
-          APP_PORT="${{ needs.build-and-test.outputs.app-port }}"
-          CPU="${{ needs.build-and-test.outputs.cpu }}"
-          MEMORY="${{ needs.build-and-test.outputs.memory }}"
-          REPO_NAME=$(echo "${{ github.event.inputs.target_repository }}" | sed 's|.*/||' | sed 's|\.git$||')
-          SERVICE_NAME="user-app-${DEPLOYMENT_ID}"
+          ENDPOINT="${{ needs.deploy-infrastructure.outputs.user_app_endpoint }}"
+          SERVICE_NAME="${{ needs.deploy-infrastructure.outputs.user_app_service }}"
 
-          # Log: Creating resources
+          # Log: Terraform deployment complete
           TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           aws dynamodb put-item \
             --table-name deplight-platform-deployment-logs \
@@ -524,161 +589,15 @@ jobs:
               \"deployment_id\": {\"S\": \"${DEPLOYMENT_ID}\"},
               \"timestamp\": {\"S\": \"${TIMESTAMP}\"},
               \"step\": {\"N\": \"6\"},
-              \"message\": {\"S\": \"Creating ECS resources for ${REPO_NAME}\"},
-              \"log_type\": {\"S\": \"info\"}
-            }" || true
-
-          # 1. Create Target Group (name must be ≤32 chars)
-          # Use first 8 chars of deployment ID as short identifier
-          SHORT_ID=$(echo -n "${DEPLOYMENT_ID}" | cut -c1-8)
-          TG_NAME="user-app-${SHORT_ID}-tg"
-          echo "Creating target group: ${TG_NAME}..."
-
-          TG_ARN=$(aws elbv2 create-target-group \
-            --name "${TG_NAME}" \
-            --protocol HTTP \
-            --port ${APP_PORT} \
-            --vpc-id ${{ secrets.VPC_ID }} \
-            --target-type ip \
-            --health-check-path / \
-            --health-check-interval-seconds 30 \
-            --health-check-timeout-seconds 5 \
-            --healthy-threshold-count 2 \
-            --unhealthy-threshold-count 3 \
-            --matcher HttpCode=200-499 \
-            --query 'TargetGroups[0].TargetGroupArn' \
-            --output text)
-
-          echo "Target Group ARN: ${TG_ARN}"
-
-          # 2. Get ALB Listener ARN
-          LISTENER_ARN=$(aws elbv2 describe-listeners \
-            --load-balancer-arn $(aws elbv2 describe-load-balancers --names delightful-deploy-alb --query 'LoadBalancers[0].LoadBalancerArn' --output text) \
-            --query 'Listeners[0].ListenerArn' \
-            --output text)
-
-          # 3. Find next available priority (60+)
-          USED_PRIORITIES=$(aws elbv2 describe-rules --listener-arn ${LISTENER_ARN} --query 'Rules[].Priority' --output text | tr '\t' '\n' | grep -E '^[0-9]+$' | sort -n || echo "")
-          NEXT_PRIORITY=60
-          for used in $USED_PRIORITIES; do
-            if [ "$used" -ge "$NEXT_PRIORITY" ]; then
-              NEXT_PRIORITY=$((used + 1))
-            fi
-          done
-
-          # 4. Create ALB Listener Rule
-          echo "Creating ALB listener rule with priority ${NEXT_PRIORITY}..."
-          aws elbv2 create-rule \
-            --listener-arn ${LISTENER_ARN} \
-            --priority ${NEXT_PRIORITY} \
-            --conditions Field=path-pattern,Values="/app/${DEPLOYMENT_ID}/*" \
-            --actions Type=forward,TargetGroupArn=${TG_ARN}
-
-          # 5. Register Task Definition
-          echo "Registering task definition..."
-
-          # Build JSON using jq to ensure proper formatting
-          TASK_DEF_JSON=$(jq -n \
-            --arg family "${SERVICE_NAME}" \
-            --arg cpu "${CPU}" \
-            --arg memory "${MEMORY}" \
-            --arg exec_role "${{ secrets.ECS_EXECUTION_ROLE_ARN }}" \
-            --arg task_role "${{ secrets.ECS_TASK_ROLE_ARN }}" \
-            --arg name "${SERVICE_NAME}" \
-            --arg image "${{ env.ECR_REGISTRY }}/${{ needs.build-and-test.outputs.ecr-repository }}:${IMAGE_TAG}" \
-            --arg port "${APP_PORT}" \
-            --arg region "${{ env.AWS_REGION }}" \
-            --arg deployment_id "${DEPLOYMENT_ID}" \
-            '{
-              family: $family,
-              networkMode: "awsvpc",
-              requiresCompatibilities: ["FARGATE"],
-              cpu: $cpu,
-              memory: $memory,
-              executionRoleArn: $exec_role,
-              taskRoleArn: $task_role,
-              containerDefinitions: [{
-                name: $name,
-                image: $image,
-                essential: true,
-                portMappings: [{
-                  containerPort: ($port | tonumber),
-                  protocol: "tcp"
-                }],
-                environment: [
-                  {name: "PORT", value: $port},
-                  {name: "ENVIRONMENT", value: "production"},
-                  {name: "BASE_URL_PATH", value: ("/app/" + $deployment_id)}
-                ],
-                logConfiguration: {
-                  logDriver: "awslogs",
-                  options: {
-                    "awslogs-group": "/aws/ecs/user-apps",
-                    "awslogs-region": $region,
-                    "awslogs-stream-prefix": $deployment_id,
-                    "awslogs-create-group": "true"
-                  }
-                }
-              }]
-            }')
-
-          echo "Task Definition JSON:"
-          echo "$TASK_DEF_JSON" | jq '.'
-
-          # Save to temporary file and register task definition
-          TASK_DEF_FILE=$(mktemp)
-          echo "$TASK_DEF_JSON" > "$TASK_DEF_FILE"
-
-          TASK_DEF_ARN=$(aws ecs register-task-definition --cli-input-json file://"$TASK_DEF_FILE" --query 'taskDefinition.taskDefinitionArn' --output text)
-          rm "$TASK_DEF_FILE"
-          echo "Task Definition ARN: ${TASK_DEF_ARN}"
-
-          # Log: Creating ECS service
-          TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          aws dynamodb put-item \
-            --table-name deplight-platform-deployment-logs \
-            --item "{
-              \"deployment_id\": {\"S\": \"${DEPLOYMENT_ID}\"},
-              \"timestamp\": {\"S\": \"${TIMESTAMP}\"},
-              \"step\": {\"N\": \"7\"},
-              \"message\": {\"S\": \"Creating ECS service: ${SERVICE_NAME}\"},
-              \"log_type\": {\"S\": \"info\"}
-            }" || true
-
-          # 6. Get ALB subnets (to ensure ECS tasks are in same AZs)
-          PUBLIC_SUBNETS=$(aws elbv2 describe-load-balancers \
-            --names delightful-deploy-alb \
-            --query 'LoadBalancers[0].AvailabilityZones[*].SubnetId' --output text | tr '\t' ',')
-
-          echo "Using subnets: ${PUBLIC_SUBNETS}"
-
-          # 7. Create ECS Service
-          echo "Creating ECS service..."
-          aws ecs create-service \
-            --cluster ${{ env.ECS_CLUSTER }} \
-            --service-name ${SERVICE_NAME} \
-            --task-definition ${TASK_DEF_ARN} \
-            --desired-count 1 \
-            --launch-type FARGATE \
-            --network-configuration "awsvpcConfiguration={subnets=[${PUBLIC_SUBNETS}],securityGroups=[${{ secrets.ECS_SECURITY_GROUP }}],assignPublicIp=ENABLED}" \
-            --load-balancers "targetGroupArn=${TG_ARN},containerName=${SERVICE_NAME},containerPort=${APP_PORT}"
-
-          echo "✅ User app deployed successfully!"
-          echo "service-name=${SERVICE_NAME}" >> $GITHUB_OUTPUT
-          echo "target-group-arn=${TG_ARN}" >> $GITHUB_OUTPUT
-          echo "path=/app/${DEPLOYMENT_ID}" >> $GITHUB_OUTPUT
-
-          # Log: Service created
-          TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          aws dynamodb put-item \
-            --table-name deplight-platform-deployment-logs \
-            --item "{
-              \"deployment_id\": {\"S\": \"${DEPLOYMENT_ID}\"},
-              \"timestamp\": {\"S\": \"${TIMESTAMP}\"},
-              \"step\": {\"N\": \"7\"},
-              \"message\": {\"S\": \"ECS service created, waiting for tasks to start\"},
+              \"message\": {\"S\": \"User app infrastructure created via Terraform\"},
               \"log_type\": {\"S\": \"success\"}
             }" || true
+
+          echo "✅ User app deployed successfully via Terraform!"
+          echo "Service: ${SERVICE_NAME}"
+          echo "Endpoint: ${ENDPOINT}"
+          echo "service-name=${SERVICE_NAME}" >> $GITHUB_OUTPUT
+          echo "endpoint=${ENDPOINT}" >> $GITHUB_OUTPUT
 
       - name: Deploy dashboard (Platform deployment)
         if: ${{ !github.event.inputs.target_repository }}
@@ -733,9 +652,14 @@ jobs:
 
           # Set URL based on deployment type
           if [ -n "${{ github.event.inputs.target_repository }}" ]; then
-            # User app
-            DEPLOYMENT_ID="${{ steps.deployment-info.outputs.deployment-id }}"
-            echo "url=http://${ALB_DNS}/app/${DEPLOYMENT_ID}" >> $GITHUB_OUTPUT
+            # User app - use Terraform output
+            USER_APP_URL="${{ needs.deploy-infrastructure.outputs.user_app_endpoint }}"
+            if [ -z "$USER_APP_URL" ]; then
+              # Fallback to deployment ID path if Terraform output not available
+              DEPLOYMENT_ID="${{ steps.deployment-info.outputs.deployment-id }}"
+              USER_APP_URL="http://${ALB_DNS}/app/${DEPLOYMENT_ID}"
+            fi
+            echo "url=${USER_APP_URL}" >> $GITHUB_OUTPUT
           else
             # Dashboard
             echo "url=http://${ALB_DNS}/dashboard" >> $GITHUB_OUTPUT

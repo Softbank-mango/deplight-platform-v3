@@ -274,3 +274,82 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+# =====================================================
+# User App Deployment Variables (Multi-tenant support)
+# =====================================================
+
+variable "deploy_user_app" {
+  description = "Whether to deploy a user application (student project)"
+  type        = bool
+  default     = false
+}
+
+variable "user_app_name" {
+  description = "User application name (sanitized repo name or deployment ID)"
+  type        = string
+  default     = ""
+}
+
+variable "user_app_repository_url" {
+  description = "GitHub repository URL for the user application"
+  type        = string
+  default     = ""
+}
+
+variable "user_app_image" {
+  description = "Full ECR repository URL for user app (without tag)"
+  type        = string
+  default     = ""
+}
+
+variable "user_app_image_tag" {
+  description = "Docker image tag for user app"
+  type        = string
+  default     = "latest"
+}
+
+variable "user_app_port" {
+  description = "Container port for user app"
+  type        = number
+  default     = 8000
+}
+
+variable "user_app_cpu" {
+  description = "CPU units for user app container (256, 512, 1024, 2048, 4096)"
+  type        = number
+  default     = 256
+}
+
+variable "user_app_memory" {
+  description = "Memory in MiB for user app container (512, 1024, 2048, etc.)"
+  type        = number
+  default     = 512
+}
+
+variable "user_app_desired_count" {
+  description = "Desired number of tasks for user app"
+  type        = number
+  default     = 1
+}
+
+variable "user_app_path_prefix" {
+  description = "Path prefix for ALB routing (e.g., 'app/deployment-id')"
+  type        = string
+  default     = ""
+}
+
+variable "user_app_health_check_path" {
+  description = "Health check path for user app"
+  type        = string
+  default     = "/"
+}
+
+variable "user_app_env_vars" {
+  description = "Additional environment variables for user app"
+  type = list(object({
+    name  = string
+    value = string
+  }))
+  default = []
+}

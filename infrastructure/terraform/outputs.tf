@@ -207,3 +207,32 @@ output "garden_ui_info" {
     cloudwatch_dashboard   = aws_cloudwatch_dashboard.main.dashboard_name
   }
 }
+
+# =====================================================
+# User App Outputs (Multi-tenant support)
+# =====================================================
+
+output "user_app_deployed" {
+  description = "Whether a user app was deployed"
+  value       = var.deploy_user_app
+}
+
+output "user_app_info" {
+  description = "Information about the deployed user app"
+  value       = var.deploy_user_app && length(module.user_app) > 0 ? module.user_app[0].app_info : null
+}
+
+output "user_app_endpoint_url" {
+  description = "Full endpoint URL for the user app"
+  value       = var.deploy_user_app && length(module.user_app) > 0 ? module.user_app[0].endpoint_url : null
+}
+
+output "user_app_service_name" {
+  description = "ECS service name for the user app"
+  value       = var.deploy_user_app && length(module.user_app) > 0 ? module.user_app[0].service_name : null
+}
+
+output "user_app_log_group" {
+  description = "CloudWatch log group name for the user app"
+  value       = var.deploy_user_app && length(module.user_app) > 0 ? module.user_app[0].log_group_name : null
+}
