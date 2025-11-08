@@ -503,11 +503,22 @@ jobs:
             TF_VARS="$TF_VARS -var=user_app_path_prefix=${{ steps.prepare-vars.outputs.path_prefix }}"
           fi
 
-          terraform plan $TF_VARS -out=tfplan
+          if [ "${{ steps.prepare-vars.outputs.deploy_user_app }}" = "true" ]; then
+            echo "Planning only user_app module with -target to avoid platform resource churn"
+            terraform plan $TF_VARS -target=module.user_app -out=tfplan
+          else
+            terraform plan $TF_VARS -out=tfplan
+          fi
 
       - name: Terraform Apply
         working-directory: ./infrastructure/terraform
-        run: terraform apply -auto-approve tfplan
+        run: |
+          if [ "${{ steps.prepare-vars.outputs.deploy_user_app }}" = "true" ]; then
+            echo "Applying only user_app module with -target"
+            terraform apply -auto-approve -target=module.user_app tfplan || terraform apply -auto-approve -target=module.user_app
+          else
+            terraform apply -auto-approve tfplan
+          fi
 
       - name: Extract Terraform outputs
         id: tf-outputs
