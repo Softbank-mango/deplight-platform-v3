@@ -387,7 +387,8 @@ Generate COMPLETE specifications. Each file should be production-ready and fully
 
 **DOCKERFILE REQUIREMENTS - KEEP IT SIMPLE**:
 - DO NOT use Nginx, Supervisor, or any process managers - single process only
-- For Streamlit apps: Just run `streamlit run app.py --server.port=PORT --server.address=0.0.0.0`
+- For Streamlit apps: Run with base URL path support: `streamlit run app.py --server.port=PORT --server.address=0.0.0.0 --server.baseUrlPath=/app/DEPLOYMENT_ID`
+  Note: DEPLOYMENT_ID will be passed as environment variable, use it in CMD like: `CMD streamlit run app.py --server.port=$PORT --server.address=0.0.0.0 --server.baseUrlPath=$BASE_URL_PATH`
 - For health checks: Use HEALTHCHECK instruction, NOT separate nginx config
 - Avoid complex multi-stage builds unless absolutely necessary
 - If using shell scripts in RUN commands, use proper syntax (no \\n escaping issues)

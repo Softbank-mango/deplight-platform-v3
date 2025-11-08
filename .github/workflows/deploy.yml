@@ -576,7 +576,8 @@ jobs:
                 }],
                 environment: [
                   {name: "PORT", value: $port},
-                  {name: "ENVIRONMENT", value: "production"}
+                  {name: "ENVIRONMENT", value: "production"},
+                  {name: "BASE_URL_PATH", value: ("/app/" + $deployment_id)}
                 ],
                 logConfiguration: {
                   logDriver: "awslogs",

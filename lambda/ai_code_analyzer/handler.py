@@ -471,12 +471,12 @@ Generate COMPLETE specifications. Each file should be production-ready and fully
 - MUST use multiple lines with >> append for multi-line configs
 - Example for nginx.conf:
   RUN echo "worker_processes 1;" > /etc/nginx/nginx.conf && \\
-      echo "events { worker_connections 1024; }" >> /etc/nginx/nginx.conf && \\
-      echo "http {" >> /etc/nginx/nginx.conf && \\
-      echo "  server {" >> /etc/nginx/nginx.conf && \\
+      echo "events {{ worker_connections 1024; }}" >> /etc/nginx/nginx.conf && \\
+      echo "http {{" >> /etc/nginx/nginx.conf && \\
+      echo "  server {{" >> /etc/nginx/nginx.conf && \\
       echo "    listen 8506;" >> /etc/nginx/nginx.conf && \\
-      echo "  }" >> /etc/nginx/nginx.conf && \\
-      echo "}" >> /etc/nginx/nginx.conf
+      echo "  }}" >> /etc/nginx/nginx.conf && \\
+      echo "}}" >> /etc/nginx/nginx.conf
 - Example for shell scripts:
   RUN echo "#!/bin/bash" > /entrypoint.sh && \\
       echo "set -e" >> /entrypoint.sh && \\
