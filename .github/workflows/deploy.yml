@@ -749,6 +749,53 @@ jobs:
           echo "--- CloudWatch Log Group exists? ---"
           aws logs describe-log-groups --log-group-name-prefix "/aws/ecs/user-apps/${SERVICE_NAME}" --region "$REGION" --query 'logGroups[*].logGroupName' --output table || true
 
+      - name: Diagnostics (if service not running)
+        if: github.event.inputs.target_repository
+        run: |
+          set -euo pipefail
+          DEPLOYMENT_ID="${{ steps.deployment-info.outputs.deployment-id }}"
+          SERVICE_NAME="user-app-${DEPLOYMENT_ID}"
+          CLUSTER="${{ env.ECS_CLUSTER }}"
+          REGION="${{ env.AWS_REGION }}"
+
+          echo "=== ECS Service Events (latest 10) ==="
+          aws ecs describe-services \
+            --cluster "$CLUSTER" \
+            --services "$SERVICE_NAME" \
+            --region "$REGION" \
+            --query 'services[0].events[0:10].[createdAt,message]' \
+            --output table || true
+
+          echo "=== Stopped task (most recent) ==="
+          TASK_ARN=$(aws ecs list-tasks \
+            --cluster "$CLUSTER" \
+            --service-name "$SERVICE_NAME" \
+            --desired-status STOPPED \
+            --region "$REGION" \
+            --query 'taskArns[0]' --output text 2>/dev/null || echo "")
+          if [ -n "$TASK_ARN" ] && [ "$TASK_ARN" != "None" ]; then
+            aws ecs describe-tasks --cluster "$CLUSTER" --tasks "$TASK_ARN" --region "$REGION" \
+              --query 'tasks[].{lastStatus:lastStatus,stoppedReason:stoppedReason,exitCode:containers[0].exitCode,reasonCont:containers[0].reason}' \
+              --output table || true
+          else
+            echo "No stopped tasks found"
+          fi
+
+          echo "=== Target Group Detailed Health ==="
+          TG_ARN=$(aws elbv2 describe-target-groups --region "$REGION" --query "TargetGroups[?contains(TargetGroupName, 'user-app-${DEPLOYMENT_ID}')].TargetGroupArn | [0]" --output text 2>/dev/null || echo "")
+          if [ -n "$TG_ARN" ] && [ "$TG_ARN" != "None" ]; then
+            aws elbv2 describe-target-health --target-group-arn "$TG_ARN" --region "$REGION" \
+              --query 'TargetHealthDescriptions[].{Target:Target,State:TargetHealth.State,Reason:TargetHealth.Reason,Description:TargetHealth.Description}' \
+              --output table || true
+          else
+            echo "Target group not found for diagnostics"
+          fi
+
+          echo "=== Recent container logs (up to 50) ==="
+          LOG_GROUP="/aws/ecs/user-apps/${SERVICE_NAME}"
+          aws logs filter-log-events --log-group-name "$LOG_GROUP" --region "$REGION" --max-items 50 \
+            --query 'events[].message' --output text 2>/dev/null || echo "No logs yet"
+
       - name: Log progress - Deployment Complete
         run: |
           DEPLOYMENT_ID="${{ steps.deployment-info.outputs.deployment-id }}"
