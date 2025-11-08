@@ -510,11 +510,12 @@ jobs:
             --port ${APP_PORT} \
             --vpc-id ${{ secrets.VPC_ID }} \
             --target-type ip \
-            --health-check-path /health \
+            --health-check-path / \
             --health-check-interval-seconds 30 \
             --health-check-timeout-seconds 5 \
             --healthy-threshold-count 2 \
             --unhealthy-threshold-count 3 \
+            --matcher HttpCode=200-499 \
             --query 'TargetGroups[0].TargetGroupArn' \
             --output text)
 
