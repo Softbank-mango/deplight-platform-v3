@@ -613,10 +613,10 @@ jobs:
               \"log_type\": {\"S\": \"info\"}
             }" || true
 
-          # 6. Get public subnets
-          PUBLIC_SUBNETS=$(aws ec2 describe-subnets \
-            --filters "Name=vpc-id,Values=${{ secrets.VPC_ID }}" "Name=map-public-ip-on-launch,Values=true" \
-            --query 'Subnets[0:2].SubnetId' --output text | tr '\t' ',')
+          # 6. Get ALB subnets (to ensure ECS tasks are in same AZs)
+          PUBLIC_SUBNETS=$(aws elbv2 describe-load-balancers \
+            --names delightful-deploy-alb \
+            --query 'LoadBalancers[0].AvailabilityZones[*].SubnetId' --output text | tr '\t' ',')
 
           echo "Using subnets: ${PUBLIC_SUBNETS}"
 
