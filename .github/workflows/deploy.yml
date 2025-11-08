@@ -544,41 +544,55 @@ jobs:
 
           # 5. Register Task Definition
           echo "Registering task definition..."
-          TASK_DEF_JSON=$(cat <<EOF
-          {
-            "family": "${SERVICE_NAME}",
-            "networkMode": "awsvpc",
-            "requiresCompatibilities": ["FARGATE"],
-            "cpu": "${CPU}",
-            "memory": "${MEMORY}",
-            "executionRoleArn": "${{ secrets.ECS_EXECUTION_ROLE_ARN }}",
-            "taskRoleArn": "${{ secrets.ECS_TASK_ROLE_ARN }}",
-            "containerDefinitions": [{
-              "name": "${SERVICE_NAME}",
-              "image": "${{ env.ECR_REGISTRY }}/${{ needs.build-and-test.outputs.ecr-repository }}:${IMAGE_TAG}",
-              "essential": true,
-              "portMappings": [{
-                "containerPort": ${APP_PORT},
-                "protocol": "tcp"
-              }],
-              "environment": [
-                {"name": "PORT", "value": "${APP_PORT}"},
-                {"name": "ENVIRONMENT", "value": "production"}
-              ],
-              "logConfiguration": {
-                "logDriver": "awslogs",
-                "options": {
-                  "awslogs-group": "/aws/ecs/user-apps",
-                  "awslogs-region": "${{ env.AWS_REGION }}",
-                  "awslogs-stream-prefix": "${DEPLOYMENT_ID}",
-                  "awslogs-create-group": "true"
-                }
-              }
-            }]
-          }
-          EOF
-          )
 
+          # Build JSON using jq to ensure proper formatting
+          TASK_DEF_JSON=$(jq -n \
+            --arg family "${SERVICE_NAME}" \
+            --arg cpu "${CPU}" \
+            --arg memory "${MEMORY}" \
+            --arg exec_role "${{ secrets.ECS_EXECUTION_ROLE_ARN }}" \
+            --arg task_role "${{ secrets.ECS_TASK_ROLE_ARN }}" \
+            --arg name "${SERVICE_NAME}" \
+            --arg image "${{ env.ECR_REGISTRY }}/${{ needs.build-and-test.outputs.ecr-repository }}:${IMAGE_TAG}" \
+            --arg port "${APP_PORT}" \
+            --arg region "${{ env.AWS_REGION }}" \
+            --arg deployment_id "${DEPLOYMENT_ID}" \
+            '{
+              family: $family,
+              networkMode: "awsvpc",
+              requiresCompatibilities: ["FARGATE"],
+              cpu: $cpu,
+              memory: $memory,
+              executionRoleArn: $exec_role,
+              taskRoleArn: $task_role,
+              containerDefinitions: [{
+                name: $name,
+                image: $image,
+                essential: true,
+                portMappings: [{
+                  containerPort: ($port | tonumber),
+                  protocol: "tcp"
+                }],
+                environment: [
+                  {name: "PORT", value: $port},
+                  {name: "ENVIRONMENT", value: "production"}
+                ],
+                logConfiguration: {
+                  logDriver: "awslogs",
+                  options: {
+                    "awslogs-group": "/aws/ecs/user-apps",
+                    "awslogs-region": $region,
+                    "awslogs-stream-prefix": $deployment_id,
+                    "awslogs-create-group": "true"
+                  }
+                }
+              }]
+            }')
+
+          echo "Task Definition JSON:"
+          echo "$TASK_DEF_JSON" | jq '.'
+
+          # Register task definition
           TASK_DEF_ARN=$(echo "$TASK_DEF_JSON" | aws ecs register-task-definition --cli-input-json file:///dev/stdin --query 'taskDefinition.taskDefinitionArn' --output text)
           echo "Task Definition ARN: ${TASK_DEF_ARN}"
 
