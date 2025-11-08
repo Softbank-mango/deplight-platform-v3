@@ -22,8 +22,10 @@ locals {
   # Platform uses: 40 (dashboard), 50 (api), 100 (health)
   # User apps start at priority 60 and increment
   # Priority is deterministic based on app name hash to avoid conflicts
+  # Deterministic priority based on hashed app name (avoid collisions)
+  # Use first 8 hex chars of md5 and parse as base-16 integer
   user_app_priority = local.create_user_app ? (
-    60 + (abs(tonumber(substr(md5(local.sanitized_app_name), 0, 8), 16)) % 1000)
+    60 + (parseint(substr(md5(local.sanitized_app_name), 0, 8), 16) % 1000)
   ) : 0
 }
 
