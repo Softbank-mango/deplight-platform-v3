@@ -353,3 +353,22 @@ variable "user_app_env_vars" {
   }))
   default = []
 }
+
+# Names for existing shared resources used by user apps (to avoid rooting into platform resources)
+variable "user_app_alb_name" {
+  description = "Name of the existing ALB to attach user app routes"
+  type        = string
+  default     = "delightful-deploy-alb"
+}
+
+variable "user_app_ecs_cluster_name" {
+  description = "Name of the existing ECS cluster where user apps run"
+  type        = string
+  default     = "delightful-deploy-cluster"
+}
+
+variable "user_app_security_group_id" {
+  description = "Security group ID for user app ECS tasks"
+  type        = string
+  default     = ""
+}

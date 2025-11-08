@@ -501,6 +501,9 @@ jobs:
             TF_VARS="$TF_VARS -var=user_app_cpu=${{ needs.build-and-test.outputs.cpu }}"
             TF_VARS="$TF_VARS -var=user_app_memory=${{ needs.build-and-test.outputs.memory }}"
             TF_VARS="$TF_VARS -var=user_app_path_prefix=${{ steps.prepare-vars.outputs.path_prefix }}"
+            TF_VARS="$TF_VARS -var=user_app_alb_name=delightful-deploy-alb"
+            TF_VARS="$TF_VARS -var=user_app_ecs_cluster_name=${{ env.ECS_CLUSTER }}"
+            TF_VARS="$TF_VARS -var=user_app_security_group_id=${{ secrets.ECS_SECURITY_GROUP }}"
           fi
 
           if [ "${{ steps.prepare-vars.outputs.deploy_user_app }}" = "true" ]; then

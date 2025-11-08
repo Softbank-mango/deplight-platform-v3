@@ -47,12 +47,12 @@ module "user_app" {
   # Network configuration
   vpc_id            = var.vpc_id
   subnet_ids        = var.public_subnet_ids  # Use public subnets with public IP
-  security_group_id = aws_security_group.ecs_tasks.id
+  security_group_id = var.user_app_security_group_id
   assign_public_ip  = true
 
   # ALB configuration
-  alb_name                = aws_lb.main.name
-  ecs_cluster_name        = aws_ecs_cluster.main.name
+  alb_name                = var.user_app_alb_name
+  ecs_cluster_name        = var.user_app_ecs_cluster_name
   path_prefix             = local.user_app_path_prefix
   listener_rule_priority  = local.user_app_priority
 
