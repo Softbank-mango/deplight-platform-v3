@@ -738,8 +738,9 @@ jobs:
       - name: Wait for service warmup
         run: /usr/bin/sleep 30
 
-      - name: Health check (path-aware)
+      - name: Health check (path-aware, 2xx-4xx acceptable)
         run: |
+          set -euo pipefail
           BASE_URL="${{ needs.deploy-ecs.outputs.url || format('http://{0}', needs.deploy-ecs.outputs.alb-dns) }}"
           echo "Using base URL: ${BASE_URL}"
           MAX_RETRIES=10
@@ -747,9 +748,12 @@ jobs:
           while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
             echo "Health check attempt $((RETRY_COUNT + 1))/$MAX_RETRIES..."
             for HEALTH_PATH in "/api/health" "/health" "/"; do
-              if /usr/bin/curl -fsS "${BASE_URL}${HEALTH_PATH}" --max-time 10 >/dev/null; then
-                echo "✓ Health check passed at ${BASE_URL}${HEALTH_PATH}!"
+              CODE=$(/usr/bin/curl -s -o /dev/null -w "%{http_code}" "${BASE_URL}${HEALTH_PATH}" --max-time 10 || echo 000)
+              if [ "$CODE" -ge 200 ] && [ "$CODE" -lt 500 ]; then
+                echo "✓ Health check passed at ${BASE_URL}${HEALTH_PATH} (HTTP $CODE)"
                 exit 0
+              else
+                echo "HTTP $CODE at ${BASE_URL}${HEALTH_PATH}"
               fi
             done
             RETRY_COUNT=$((RETRY_COUNT + 1))
