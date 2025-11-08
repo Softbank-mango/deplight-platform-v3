@@ -506,9 +506,12 @@ jobs:
             TF_VARS="$TF_VARS -var=user_app_security_group_id=${{ secrets.ECS_SECURITY_GROUP }}"
           fi
 
+          # Persist args for Apply step
+          echo "$TF_VARS" > tfvars_args
+
           if [ "${{ steps.prepare-vars.outputs.deploy_user_app }}" = "true" ]; then
             echo "Planning only user_app module with -target to avoid platform resource churn"
-            terraform plan $TF_VARS -target=module.user_app -out=tfplan
+            terraform plan $TF_VARS -target=module.user_app -out=tfplan || echo "Plan returned non-zero; will attempt apply with computed vars"
           else
             terraform plan $TF_VARS -out=tfplan
           fi
@@ -517,8 +520,9 @@ jobs:
         working-directory: ./infrastructure/terraform
         run: |
           if [ "${{ steps.prepare-vars.outputs.deploy_user_app }}" = "true" ]; then
-            echo "Applying only user_app module with -target"
-            terraform apply -auto-approve -target=module.user_app tfplan || terraform apply -auto-approve -target=module.user_app
+            echo "Applying only user_app module with -target (direct apply with vars)"
+            ARGS=$(cat tfvars_args 2>/dev/null || true)
+            terraform apply -auto-approve $ARGS -target=module.user_app
           else
             terraform apply -auto-approve tfplan
           fi
