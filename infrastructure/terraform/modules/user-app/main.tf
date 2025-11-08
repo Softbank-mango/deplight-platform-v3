@@ -136,17 +136,7 @@ resource "aws_ecs_task_definition" "user_app" {
         }
       }
 
-      # Accept 2xx–4xx as healthy to match ALB matcher and common app defaults
-      healthCheck = {
-        command     = [
-          "CMD-SHELL",
-          "CODE=\\$(curl -s -o /dev/null -w '%{http_code}' http://localhost:${var.container_port}${var.health_check_path} || echo 000); [ \\\"$CODE\\\" -ge 200 ] && [ \\\"$CODE\\\" -lt 500 ] || exit 1"
-        ]
-        interval    = 30
-        timeout     = 5
-        retries     = 3
-        startPeriod = 60
-      }
+      # No container-level healthCheck: rely on ALB Target Group health checks
     }
   ])
 
