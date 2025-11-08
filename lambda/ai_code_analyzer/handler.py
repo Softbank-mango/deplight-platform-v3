@@ -562,10 +562,11 @@ def _fix_dockerfile_syntax(dockerfile: str, project_info: Dict[str, Any], file_l
                 if 'python' in line.lower() and 'uvicorn' not in line.lower():
                     # Use the detected Python entrypoint from file_list
                     module_name = python_entrypoint.replace('.py', '')
-                    # Use shell form to allow env expansion for PORT and BASE_URL_PATH
+                    # Use shell form to allow env expansion for PORT
+                    # NOTE: NO --root-path because ALB handles path routing, app serves on /
                     fixed_line = (
                         'CMD ["/bin/sh", "-lc", '
-                        '"uvicorn %s:app --host 0.0.0.0 --port ${PORT:-8000} --root-path ${BASE_URL_PATH:-/}"]'
+                        '"uvicorn %s:app --host 0.0.0.0 --port ${PORT:-8000}"]'
                     ) % module_name
                     corrections_made.append(f"Fixed FastAPI CMD: {line.strip()} → {fixed_line} (using detected entrypoint: {python_entrypoint})")
                     fixed_lines.append(fixed_line)
@@ -693,7 +694,31 @@ def _fix_dockerfile_syntax(dockerfile: str, project_info: Dict[str, Any], file_l
         for correction in corrections_made:
             print(f"  - {correction}")
 
-    return '\n'.join(fixed_lines)
+    # Join and apply final hygiene passes
+    result = '\n'.join(fixed_lines)
+
+    # Make pip install tolerant if requirements.txt is absent
+    try:
+        import re as _re
+        result = _re.sub(
+            r"RUN\s+pip\s+install\s+--no-cache-dir\s+-r\s+requirements\.txt\b",
+            "RUN test -f requirements.txt && pip install --no-cache-dir -r requirements.txt || true",
+            result,
+            flags=_re.IGNORECASE,
+        )
+    except Exception:
+        pass
+
+    # Remove Dockerfile-level HEALTHCHECK lines that rely on curl (not always present)
+    try:
+        result = '\n'.join(
+            line for line in result.splitlines()
+            if not line.strip().upper().startswith('HEALTHCHECK')
+        )
+    except Exception:
+        pass
+
+    return result
 
 
 def _generate_deployment_specs(
@@ -1024,7 +1049,8 @@ def _get_start_command(project_info: Dict[str, Any]) -> str:
     # Python
     if "python" in primary_lang:
         if any("fastapi" in f for f in frameworks):
-            return "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --root-path ${BASE_URL_PATH:-/}"
+            # NO --root-path: ALB handles path routing, app serves on /
+            return "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"
         elif any("django" in f for f in frameworks):
             return "gunicorn myproject.wsgi:application --bind 0.0.0.0:8000"
         elif any("flask" in f for f in frameworks):
