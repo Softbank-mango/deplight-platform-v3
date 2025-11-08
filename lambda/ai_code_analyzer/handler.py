@@ -562,10 +562,11 @@ def _fix_dockerfile_syntax(dockerfile: str, project_info: Dict[str, Any], file_l
                 if 'python' in line.lower() and 'uvicorn' not in line.lower():
                     # Use the detected Python entrypoint from file_list
                     module_name = python_entrypoint.replace('.py', '')
+                    # Use shell form to allow env expansion for PORT and BASE_URL_PATH
                     fixed_line = (
-                        f'CMD ["/bin/sh", "-lc", '
-                        f'"uvicorn {module_name}:app --host 0.0.0.0 --port ${'{'}PORT:-8000{'}'} --root-path ${'{'}BASE_URL_PATH:-/}{'}'}"]'
-                    )
+                        'CMD ["/bin/sh", "-lc", '
+                        '"uvicorn %s:app --host 0.0.0.0 --port ${PORT:-8000} --root-path ${BASE_URL_PATH:-/}"]'
+                    ) % module_name
                     corrections_made.append(f"Fixed FastAPI CMD: {line.strip()} → {fixed_line} (using detected entrypoint: {python_entrypoint})")
                     fixed_lines.append(fixed_line)
                     print(f"✅ Fixed FastAPI CMD to use detected entrypoint: {python_entrypoint} → {module_name}:app")
