@@ -696,31 +696,31 @@ jobs:
       - name: Wait for service warmup
         run: /usr/bin/sleep 30
 
-      - name: Health check
+      - name: Health check (path-aware)
         run: |
-          ALB_DNS="${{ needs.deploy-ecs.outputs.alb-dns }}"
+          BASE_URL="${{ needs.deploy-ecs.outputs.url || format('http://{0}', needs.deploy-ecs.outputs.alb-dns) }}"
+          echo "Using base URL: ${BASE_URL}"
           MAX_RETRIES=10
           RETRY_COUNT=0
           while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
             echo "Health check attempt $((RETRY_COUNT + 1))/$MAX_RETRIES..."
             for HEALTH_PATH in "/api/health" "/health" "/"; do
-              if /usr/bin/curl -fsS "http://${ALB_DNS}${HEALTH_PATH}" --max-time 10 >/dev/null; then
-                echo "✓ Health check passed at ${HEALTH_PATH}!"
+              if /usr/bin/curl -fsS "${BASE_URL}${HEALTH_PATH}" --max-time 10 >/dev/null; then
+                echo "✓ Health check passed at ${BASE_URL}${HEALTH_PATH}!"
                 exit 0
               fi
             done
             RETRY_COUNT=$((RETRY_COUNT + 1))
             /usr/bin/sleep 10
           done
-          echo "✗ Health check failed after $MAX_RETRIES attempts"
+          echo "✗ Health check failed for ${BASE_URL} after $MAX_RETRIES attempts"
           exit 1
 
       - name: API endpoint test
         run: |
-          ALB_DNS="${{ needs.deploy-ecs.outputs.alb-dns }}"
-
-          echo "Testing root endpoint..."
-          /usr/bin/curl -fsS "http://${ALB_DNS}/" --max-time 10 >/dev/null || echo "root endpoint not available"
+          echo "Testing deployment base URL..."
+          BASE_URL="${{ needs.deploy-ecs.outputs.url || format('http://{0}', needs.deploy-ecs.outputs.alb-dns) }}"
+          /usr/bin/curl -fsS "${BASE_URL}" --max-time 10 >/dev/null || echo "base URL not available (may be expected if app has no root)"
 
           echo "Testing /api/health..."
           /usr/bin/curl -fsS "http://${ALB_DNS}/api/health" --max-time 10 >/dev/null || echo "/api/health not available"
