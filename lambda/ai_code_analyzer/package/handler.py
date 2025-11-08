@@ -385,6 +385,17 @@ Generate COMPLETE specifications. Each file should be production-ready and fully
 - Use Blue-Green deployment strategy with CodeDeploy
 - Generate appropriate build commands for the detected language/framework
 
+**DOCKERFILE REQUIREMENTS - KEEP IT SIMPLE**:
+- DO NOT use Nginx, Supervisor, or any process managers - single process only
+- For Streamlit apps: Just run `streamlit run app.py --server.port=PORT --server.address=0.0.0.0`
+- For health checks: Use HEALTHCHECK instruction, NOT separate nginx config
+- Avoid complex multi-stage builds unless absolutely necessary
+- If using shell scripts in RUN commands, use proper syntax (no \\n escaping issues)
+- Test that all configuration files are syntactically valid
+- For Python apps: Use official python:3.11-slim base image
+- For Node apps: Use official node:18-alpine base image
+- Keep Dockerfile under 50 lines if possible
+
 Return your response in this format:
 
 ---DOCKERFILE---
@@ -798,14 +809,18 @@ def lambda_handler(event, context):
     ai_analysis_table = os.getenv("AI_ANALYSIS_TABLE", "delightful-deploy-ai-analysis")
     s3_bucket = os.getenv("S3_BUCKET", "delightful-deploy-artifacts")
 
-    # Generate analysis ID
+    # Use analysis_id from event payload (provided by GitHub Actions workflow)
+    # If not provided, fall back to generating one
     repository = event.get("repository", "unknown/repo")
     commit_sha = event.get("commit_sha", "unknown")
     branch = event.get("branch", "main")
 
-    analysis_id = hashlib.sha256(
-        f"{repository}-{commit_sha}-{datetime.now(timezone.utc).isoformat()}".encode()
-    ).hexdigest()[:16]
+    analysis_id = event.get("analysis_id")
+    if not analysis_id:
+        print("⚠️ No analysis_id in event, generating one...")
+        analysis_id = hashlib.md5(
+            f"{repository}-{commit_sha}".encode()
+        ).hexdigest()[:24]
 
     try:
         print(f"🔍 Analyzing repository: {repository} @ {commit_sha}")
