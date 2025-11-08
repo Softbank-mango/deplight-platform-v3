@@ -285,6 +285,24 @@ jobs:
           echo "✅ Dockerfile ready"
           ls -la ./user_repo/Dockerfile || echo "No Dockerfile found"
 
+      - name: Download AI-generated Terraform tfvars from S3
+        if: github.event.inputs.target_repository
+        id: dl-tfvars
+        run: |
+          echo "📥 Downloading AI-generated Terraform tfvars from S3..."
+          ANALYSIS_ID="${{ steps.ai-analysis.outputs.analysis_id }}"
+          S3_BUCKET="${{ env.S3_ARTIFACTS_BUCKET }}"
+          mkdir -p infrastructure/terraform
+          # Try both keys used by the analyzer
+          aws s3 cp "s3://${S3_BUCKET}/analysis/${ANALYSIS_ID}/terraform_tfvars" infrastructure/terraform/ai.tfvars || true
+          aws s3 cp "s3://${S3_BUCKET}/analysis/${ANALYSIS_ID}/terraform.tfvars" infrastructure/terraform/ai.tfvars || true
+          if [ -f infrastructure/terraform/ai.tfvars ]; then
+            echo "ai_tfvars=present" >> $GITHUB_OUTPUT
+            echo "✅ Downloaded ai.tfvars"
+          else
+            echo "⚠️ No ai.tfvars found; proceeding with defaults"
+          fi
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -465,6 +483,12 @@ jobs:
           TF_VARS="$TF_VARS -var=container_port=${{ needs.build-and-test.outputs.app-port }}"
           TF_VARS="$TF_VARS -var=container_cpu=${{ needs.build-and-test.outputs.cpu }}"
           TF_VARS="$TF_VARS -var=container_memory=${{ needs.build-and-test.outputs.memory }}"
+
+          # If AI-generated tfvars exists, include it
+          if [ -f ai.tfvars ]; then
+            TF_VARS="$TF_VARS -var-file=ai.tfvars"
+            echo "Using AI-generated tfvars (ai.tfvars)"
+          fi
 
           # Add user app variables if deploying a user app
           if [ "${{ steps.prepare-vars.outputs.deploy_user_app }}" = "true" ]; then
