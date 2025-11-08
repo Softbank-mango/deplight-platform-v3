@@ -108,6 +108,7 @@ jobs:
       memory: ${{ steps.ai-analysis.outputs.memory || '512' }}
       release-tag: ${{ needs.create-release.outputs.release-tag }}
       ecs-service-name: ${{ steps.select-service.outputs.service }}
+      analysis-id: ${{ steps.ai-analysis.outputs.analysis_id }}
 
     steps:
       - name: Parse repository URL
@@ -888,19 +889,54 @@ jobs:
 
       - name: Update DynamoDB deployment status
         run: |
-          SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
-          DEPLOYMENT_ID="deploy-${SHORT_SHA}"
+          TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           STATUS="${{ steps.status.outputs.status }}"
 
-          aws dynamodb update-item \
-            --table-name delightful-deploy-deployment-history \
-            --key "{\"id\": {\"S\": \"${DEPLOYMENT_ID}\"}}" \
-            --update-expression "SET #status = :status, completed_at = :timestamp" \
-            --expression-attribute-names '{"#status": "status"}' \
-            --expression-attribute-values "{
-              \":status\": {\"S\": \"${STATUS}\"},
-              \":timestamp\": {\"S\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}
-            }"
+          # Check if this is a user app deployment
+          if [ -n "${{ github.event.inputs.target_repository }}" ]; then
+            # User app deployment - create complete record in deployment-history
+            DEPLOYMENT_ID="${{ needs.deploy-ecs.outputs.deployment-id }}"
+            TARGET_REPO="${{ github.event.inputs.target_repository }}"
+            ANALYSIS_ID="${{ needs.build-and-test.outputs.analysis-id }}"
+            DEPLOYMENT_URL="${{ needs.deploy-ecs.outputs.url }}"
+            IMAGE_TAG="${{ needs.build-and-test.outputs.image-tag }}"
+
+            echo "Saving user app deployment to DynamoDB: ${DEPLOYMENT_ID}"
+
+            aws dynamodb put-item \
+              --table-name delightful-deploy-deployment-history \
+              --item "{
+                \"id\": {\"S\": \"${DEPLOYMENT_ID}\"},
+                \"deployment_id\": {\"S\": \"${DEPLOYMENT_ID}\"},
+                \"repository\": {\"S\": \"${TARGET_REPO}\"},
+                \"target_repository\": {\"S\": \"${TARGET_REPO}\"},
+                \"commit_sha\": {\"S\": \"${{ github.sha }}\"},
+                \"branch\": {\"S\": \"${{ github.event.inputs.target_branch || 'main' }}\"},
+                \"status\": {\"S\": \"${STATUS}\"},
+                \"timestamp\": {\"S\": \"${TIMESTAMP}\"},
+                \"completed_at\": {\"S\": \"${TIMESTAMP}\"},
+                \"analysis_id\": {\"S\": \"${ANALYSIS_ID}\"},
+                \"deployment_url\": {\"S\": \"${DEPLOYMENT_URL}\"},
+                \"image_tag\": {\"S\": \"${IMAGE_TAG}\"},
+                \"pusher\": {\"S\": \"${{ github.actor }}\"},
+                \"platform_repo\": {\"S\": \"${{ github.repository }}\"}
+              }"
+          else
+            # Platform deployment - update existing record
+            SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
+            DEPLOYMENT_ID="deploy-${SHORT_SHA}"
+
+            aws dynamodb update-item \
+              --table-name delightful-deploy-deployment-history \
+              --key "{\"id\": {\"S\": \"${DEPLOYMENT_ID}\"}}" \
+              --update-expression "SET #status = :status, completed_at = :timestamp, deployment_id = :deployment_id" \
+              --expression-attribute-names '{"#status": "status"}' \
+              --expression-attribute-values "{
+                \":status\": {\"S\": \"${STATUS}\"},
+                \":timestamp\": {\"S\": \"${TIMESTAMP}\"},
+                \":deployment_id\": {\"S\": \"${DEPLOYMENT_ID}\"}
+              }"
+          fi
 
       - name: Create deployment summary
         run: |
