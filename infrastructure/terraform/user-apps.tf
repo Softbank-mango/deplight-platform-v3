@@ -18,14 +18,11 @@ locals {
   # Path prefix for ALB routing (e.g., "app/deployment-12345")
   user_app_path_prefix = local.create_user_app ? var.user_app_path_prefix : ""
 
-  # Calculate next available priority for ALB listener rule
-  # Platform uses: 40 (dashboard), 50 (api), 100 (health)
-  # User apps start at priority 60 and increment
-  # Priority is deterministic based on app name hash to avoid conflicts
-  # Deterministic priority based on hashed app name (avoid collisions)
-  # Use first 8 hex chars of md5 and parse as base-16 integer
+  # Calculate deterministic priority for ALB listener rule
+  # Reserved low priorities in platform: 40 (dashboard), 50 (api), 100 (health)
+  # Use a higher range (1000–50000) to avoid collisions with reserved rules
   user_app_priority = local.create_user_app ? (
-    60 + (parseint(substr(md5(local.sanitized_app_name), 0, 8), 16) % 1000)
+    1000 + (parseint(substr(md5(local.sanitized_app_name), 0, 8), 16) % 40000)
   ) : 0
 }
 
