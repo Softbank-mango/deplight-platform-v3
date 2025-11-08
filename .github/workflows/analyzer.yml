@@ -17,8 +17,8 @@ on:
 
 env:
   AWS_REGION: ap-northeast-2
-  ARTIFACTS_BUCKET: deplight-dev-artifacts-513348493870-apne2
-  AI_ANALYSIS_TABLE: deplight-dev-ai-analysis
+  ARTIFACTS_BUCKET: deplight-platform-artifacts-apne2
+  AI_ANALYSIS_TABLE: deplight-platform-ai-analysis
 
 permissions:
   id-token: write

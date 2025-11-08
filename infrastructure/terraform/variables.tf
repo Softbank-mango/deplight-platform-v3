@@ -248,7 +248,7 @@ variable "use_existing_artifacts_bucket" {
 variable "artifacts_bucket_name" {
   description = "Artifacts bucket name (used if use_existing_artifacts_bucket=true)"
   type        = string
-  default     = "delightful-deploy-artifacts-513348493870"
+  default     = "deplight-platform-artifacts-apne2"
 }
 
 variable "cpu_target_value" {

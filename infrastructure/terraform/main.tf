@@ -40,11 +40,11 @@ terraform {
   # Good for: Team collaboration without Terraform Cloud
   #
   # backend "s3" {
-  #   bucket         = "delightful-deploy-tfstate"
+  #   bucket         = "deplight-platform-tf-state"
   #   key            = "terraform.tfstate"
   #   region         = "ap-northeast-2"
   #   encrypt        = true
-  #   dynamodb_table = "delightful-deploy-tfstate-lock"
+  #   dynamodb_table = "deplight-platform-tf-locks"
   # }
 }
 

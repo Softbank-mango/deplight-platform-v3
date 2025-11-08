@@ -62,9 +62,9 @@ jobs:
 
           TABLES=(
             "delightful-deploy-garden-state"
-            "delightful-deploy-ai-analysis"
-            "delightful-deploy-deployment-history"
-            "delightful-deploy-deployment-logs"
+            "deplight-platform-ai-analysis"
+            "deplight-platform-deployment-history"
+            "deplight-platform-deployment-logs"
           )
 
           for TABLE in "${TABLES[@]}"; do
@@ -125,9 +125,9 @@ jobs:
           echo "  • X-Ray sampling rule: delightful-deploy-sampling-rule"
           echo "  • DynamoDB tables (4):"
           echo "    - delightful-deploy-garden-state"
-          echo "    - delightful-deploy-ai-analysis"
-          echo "    - delightful-deploy-deployment-history"
-          echo "    - delightful-deploy-deployment-logs"
+          echo "    - deplight-platform-ai-analysis"
+          echo "    - deplight-platform-deployment-history"
+          echo "    - deplight-platform-deployment-logs"
           echo "  • CloudWatch log groups (2):"
           echo "    - /aws/ecs/delightful-deploy"
           echo "    - /aws/ecs/delightful-deploy-dashboard"
