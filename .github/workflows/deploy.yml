@@ -40,25 +40,90 @@ env:
   ECS_CLUSTER: delightful-deploy-cluster
   ECS_SERVICE: delightful-deploy-service
   S3_ARTIFACTS_BUCKET: deplight-platform-artifacts-apne2
+  SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+  SLACK_CHANNEL: C09RMAJJU5T  # #slack-전체
 
 jobs:
   notify-start:
     name: Notify Start (Slack)
     runs-on: ubuntu-latest
     steps:
-      - name: Post start message to Slack
-        if: ${{ secrets.SLACK_WEBHOOK_URL != '' }}
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+      - name: 🚀 Send deployment start notification to Slack
+        if: env.SLACK_BOT_TOKEN != ''
         run: |
-          set -euo pipefail
           RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           TARGET_REPO="${{ github.event.inputs.target_repository || github.repository }}"
           ENV_NAME="${{ github.event.inputs.environment || 'dev' }}"
-          TEXT="🚀 Deploy started\n• Repo: ${TARGET_REPO}\n• Env: ${ENV_NAME}\n• Run: <${RUN_URL}|${{ github.run_id }}>\n• By: @${{ github.actor }}"
-          curl -X POST -H 'Content-type: application/json' \
-            --data "$(jq -n --arg t "$TEXT" '{text:$t}')" \
-            "$SLACK_WEBHOOK_URL"
+          DEPLOYMENT_ID="${{ github.event.inputs.deployment_id || github.run_id }}"
+
+          curl -X POST https://slack.com/api/chat.postMessage \
+            -H "Authorization: Bearer ${{ env.SLACK_BOT_TOKEN }}" \
+            -H "Content-type: application/json; charset=utf-8" \
+            -d '{
+              "channel": "${{ env.SLACK_CHANNEL }}",
+              "text": "🚀 새로운 배포가 시작되었습니다!",
+              "blocks": [
+                {
+                  "type": "header",
+                  "text": {
+                    "type": "plain_text",
+                    "text": "🚀 새로운 배포가 시작되었습니다!",
+                    "emoji": true
+                  }
+                },
+                {
+                  "type": "section",
+                  "fields": [
+                    {
+                      "type": "mrkdwn",
+                      "text": "*배포 ID:*\n`'"${DEPLOYMENT_ID}"'`"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*저장소:*\n'"${TARGET_REPO}"'"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*환경:*\n`'"${ENV_NAME}"'`"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*트리거:*\n${{ github.actor }}"
+                    }
+                  ]
+                },
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "```\n🌱 정원에 새로운 식물을 심고 있습니다...\n잠시만 기다려주세요! 곧 아름다운 꽃이 필 거예요.\n```"
+                  }
+                },
+                {
+                  "type": "context",
+                  "elements": [
+                    {
+                      "type": "mrkdwn",
+                      "text": "⏰ 시작 시각: <!date^'"$(date +%s)"'^{date_num} {time_secs}|'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'>"
+                    }
+                  ]
+                },
+                {
+                  "type": "actions",
+                  "elements": [
+                    {
+                      "type": "button",
+                      "text": {
+                        "type": "plain_text",
+                        "text": "🔍 GitHub Actions 보기"
+                      },
+                      "url": "'"${RUN_URL}"'",
+                      "style": "primary"
+                    }
+                  ]
+                }
+              ]
+            }'
   create-release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
@@ -115,8 +180,7 @@ jobs:
   build-and-test:
     name: Build & Test
     runs-on: ubuntu-latest
-    needs: [notify-start]
-    needs: [create-release]
+    needs: [notify-start, create-release]
     if: always() && (needs.create-release.result == 'success' || needs.create-release.result == 'skipped')
 
     outputs:
@@ -967,36 +1031,192 @@ jobs:
             echo "color=danger" >> $GITHUB_OUTPUT
           fi
 
-      - name: Send Slack notification
-        if: ${{ secrets.SLACK_WEBHOOK_URL != '' }}
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+      - name: 🎉 Send success notification to Slack
+        if: steps.status.outputs.status == 'success' && env.SLACK_BOT_TOKEN != ''
         run: |
-          PAYLOAD=$(jq -n \
-            --arg text "${{ steps.status.outputs.emoji }} Deployment ${{ steps.status.outputs.status }}" \
-            --arg repo "${{ github.repository }}" \
-            --arg sha "${{ github.sha }}" \
-            --arg actor "${{ github.actor }}" \
-            --arg status "${{ steps.status.outputs.status }}" \
-            --arg color "${{ steps.status.outputs.color }}" \
-            --arg url "${{ needs.deploy-ecs.outputs.url }}" \
-            '{
-              text: $text,
-              attachments: [{
-                color: $color,
-                fields: [
-                  {title: "Repository", value: $repo, short: true},
-                  {title: "Commit", value: $sha, short: true},
-                  {title: "Triggered by", value: $actor, short: true},
-                  {title: "Status", value: $status, short: true},
-                  {title: "URL", value: $url, short: false}
-                ]
-              }]
-            }')
+          DEPLOYMENT_ID="${{ needs.deploy-ecs.outputs.deployment-id || github.run_id }}"
+          TARGET_REPO="${{ github.event.inputs.target_repository || github.repository }}"
+          SERVICE_URL="${{ needs.deploy-ecs.outputs.url }}"
+          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          DURATION="${SECONDS:-0}"
+          DURATION_MIN=$((DURATION / 60))
+          DURATION_SEC=$((DURATION % 60))
 
-          curl -X POST -H 'Content-type: application/json' \
-            --data "$PAYLOAD" \
-            $SLACK_WEBHOOK_URL || echo "Slack notification failed"
+          curl -X POST https://slack.com/api/chat.postMessage \
+            -H "Authorization: Bearer ${{ env.SLACK_BOT_TOKEN }}" \
+            -H "Content-type: application/json; charset=utf-8" \
+            -d '{
+              "channel": "${{ env.SLACK_CHANNEL }}",
+              "text": "✅ 배포 성공!",
+              "blocks": [
+                {
+                  "type": "header",
+                  "text": {
+                    "type": "plain_text",
+                    "text": "✨ 배포 완료! 축하합니다! 🎊",
+                    "emoji": true
+                  }
+                },
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "```\n🎯 성공적으로 배포되었습니다!\n정원에 아름다운 꽃이 피었어요! 🌸\n이제 커피 한 잔 하면서 쉬셔도 됩니다! ☕\n```"
+                  }
+                },
+                {
+                  "type": "section",
+                  "fields": [
+                    {
+                      "type": "mrkdwn",
+                      "text": "*배포 ID:*\n`'"${DEPLOYMENT_ID}"'`"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*저장소:*\n'"${TARGET_REPO}"'"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*소요 시간:*\n약 '"${DURATION_MIN}"'분 '"${DURATION_SEC}"'초"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*서비스 URL:*\n<'"${SERVICE_URL}"'|접속하기 🔗>"
+                    }
+                  ]
+                },
+                {
+                  "type": "divider"
+                },
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "🍕 *팀원들에게 피자를 돌려주세요!*\n훌륭한 작업이었습니다. 다음 배포도 화이팅! 💪"
+                  }
+                },
+                {
+                  "type": "context",
+                  "elements": [
+                    {
+                      "type": "mrkdwn",
+                      "text": "⏰ 완료 시각: <!date^'"$(date +%s)"'^{date_num} {time_secs}|'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'>"
+                    }
+                  ]
+                },
+                {
+                  "type": "actions",
+                  "elements": [
+                    {
+                      "type": "button",
+                      "text": {
+                        "type": "plain_text",
+                        "text": "🔍 상세 로그 보기"
+                      },
+                      "url": "'"${RUN_URL}"'",
+                      "style": "primary"
+                    },
+                    {
+                      "type": "button",
+                      "text": {
+                        "type": "plain_text",
+                        "text": "🌐 서비스 접속"
+                      },
+                      "url": "'"${SERVICE_URL}"'"
+                    }
+                  ]
+                }
+              ]
+            }'
+
+      - name: 😓 Send failure notification to Slack
+        if: steps.status.outputs.status == 'failure' && env.SLACK_BOT_TOKEN != ''
+        run: |
+          DEPLOYMENT_ID="${{ needs.deploy-ecs.outputs.deployment-id || github.run_id }}"
+          TARGET_REPO="${{ github.event.inputs.target_repository || github.repository }}"
+          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          DURATION="${SECONDS:-0}"
+          DURATION_MIN=$((DURATION / 60))
+          DURATION_SEC=$((DURATION % 60))
+
+          curl -X POST https://slack.com/api/chat.postMessage \
+            -H "Authorization: Bearer ${{ env.SLACK_BOT_TOKEN }}" \
+            -H "Content-type: application/json; charset=utf-8" \
+            -d '{
+              "channel": "${{ env.SLACK_CHANNEL }}",
+              "text": "❌ 배포 실패",
+              "blocks": [
+                {
+                  "type": "header",
+                  "text": {
+                    "type": "plain_text",
+                    "text": "😅 배포 실패... 하지만 괜찮아요!",
+                    "emoji": true
+                  }
+                },
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "```\n⚠️ 배포 중 문제가 발생했습니다.\n하지만 걱정하지 마세요! 에러는 배움의 기회입니다.\n로그를 확인하고 다시 도전해봐요! 🚀\n```"
+                  }
+                },
+                {
+                  "type": "section",
+                  "fields": [
+                    {
+                      "type": "mrkdwn",
+                      "text": "*배포 ID:*\n`'"${DEPLOYMENT_ID}"'`"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*저장소:*\n'"${TARGET_REPO}"'"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*소요 시간:*\n약 '"${DURATION_MIN}"'분 '"${DURATION_SEC}"'초"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*상태:*\n❌ 실패"
+                    }
+                  ]
+                },
+                {
+                  "type": "divider"
+                },
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "💡 *다음 단계:*\n1. 에러 로그를 확인하세요\n2. 수정 후 다시 배포하면 됩니다\n3. 막히면 팀원들에게 도움을 요청하세요!\n\n_실패는 성공의 어머니입니다._ 😊"
+                  }
+                },
+                {
+                  "type": "context",
+                  "elements": [
+                    {
+                      "type": "mrkdwn",
+                      "text": "⏰ 실패 시각: <!date^'"$(date +%s)"'^{date_num} {time_secs}|'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'>"
+                    }
+                  ]
+                },
+                {
+                  "type": "actions",
+                  "elements": [
+                    {
+                      "type": "button",
+                      "text": {
+                        "type": "plain_text",
+                        "text": "🔥 에러 로그 확인"
+                      },
+                      "url": "'"${RUN_URL}"'",
+                      "style": "danger"
+                    }
+                  ]
+                }
+              ]
+            }'
 
       - name: Update DynamoDB deployment status
         run: |
